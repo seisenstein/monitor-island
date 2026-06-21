@@ -35,47 +35,64 @@ struct RingGauge: View {
     }
 }
 
-// Sparkline with a gradient stroke and a soft area fill (teal/energy).
+// Sparkline with smooth Catmull-Rom curves (rounded peaks and dips), a gradient
+// stroke and a soft area fill.
 struct Sparkline: View {
     var data: [Double]
+
+    // Smooth curve through the points (Catmull-Rom -> cubic bezier, tension 1/6).
+    private func curve(_ pts: [CGPoint], closedTo bottom: CGFloat?) -> Path {
+        var path = Path()
+        guard pts.count > 1 else { return path }
+        if let bottom = bottom {
+            path.move(to: CGPoint(x: pts[0].x, y: bottom))
+            path.addLine(to: pts[0])
+        } else {
+            path.move(to: pts[0])
+        }
+        for i in 0..<(pts.count - 1) {
+            let p0 = i > 0 ? pts[i - 1] : pts[i]
+            let p1 = pts[i]
+            let p2 = pts[i + 1]
+            let p3 = i + 2 < pts.count ? pts[i + 2] : pts[i + 1]
+            let cp1 = CGPoint(x: p1.x + (p2.x - p0.x) / 6.0, y: p1.y + (p2.y - p0.y) / 6.0)
+            let cp2 = CGPoint(x: p2.x - (p3.x - p1.x) / 6.0, y: p2.y - (p3.y - p1.y) / 6.0)
+            path.addCurve(to: p2, control1: cp1, control2: cp2)
+        }
+        if let bottom = bottom {
+            path.addLine(to: CGPoint(x: pts[pts.count - 1].x, y: bottom))
+            path.closeSubpath()
+        }
+        return path
+    }
+
     var body: some View {
         GeometryReader { geo in
+            let h = geo.size.height
             let maxV = max(data.max() ?? 1, 1)
             let count = data.count
             let stepX = count > 1 ? geo.size.width / CGFloat(count - 1) : 0
+            // Inset the curve a touch vertically so rounded peaks are not clipped.
+            let topPad: CGFloat = 3
             let pts: [CGPoint] = data.enumerated().map { i, v in
                 CGPoint(x: CGFloat(i) * stepX,
-                        y: geo.size.height * (1 - CGFloat(v / maxV)))
+                        y: topPad + (h - topPad) * (1 - CGFloat(v / maxV)))
             }
-
             ZStack {
-                // Soft area fill.
                 if count > 1 {
-                    Path { p in
-                        p.move(to: CGPoint(x: 0, y: geo.size.height))
-                        p.addLine(to: pts[0])
-                        for pt in pts.dropFirst() { p.addLine(to: pt) }
-                        p.addLine(to: CGPoint(x: geo.size.width, y: geo.size.height))
-                        p.closeSubpath()
-                    }
-                    .fill(LinearGradient(
-                        colors: [Theme.teal.opacity(0.28), Theme.energy.opacity(0.04)],
-                        startPoint: .top, endPoint: .bottom))
-                }
-                // Gradient stroke.
-                if count > 1 {
-                    Path { p in
-                        p.move(to: pts[0])
-                        for pt in pts.dropFirst() { p.addLine(to: pt) }
-                    }
-                    .stroke(
-                        LinearGradient(colors: [Theme.teal, Theme.energy],
-                                       startPoint: .leading, endPoint: .trailing),
-                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round, lineJoin: .round))
+                    curve(pts, closedTo: h)
+                        .fill(LinearGradient(
+                            colors: [Theme.sky.opacity(0.30), Theme.sky.opacity(0.02)],
+                            startPoint: .top, endPoint: .bottom))
+                    curve(pts, closedTo: nil)
+                        .stroke(
+                            LinearGradient(colors: [Theme.sky.opacity(0.85), Theme.sky],
+                                           startPoint: .leading, endPoint: .trailing),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 }
             }
         }
-        .frame(height: 26)
+        .frame(height: 30)
     }
 }
 
