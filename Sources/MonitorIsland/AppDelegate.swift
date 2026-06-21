@@ -7,6 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem!
     let model = IslandModel()
     private let originKey = "MonitorIsland.windowOrigin"
+    private let snappedKey = "MonitorIsland.snappedUnderCamera"
+    private var snapMenuItem: NSMenuItem?
+    private var snappedUnderCamera = false
+    private var repositioning = false   // true while we move the window programmatically
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontLoader.register()
@@ -49,6 +53,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NotificationCenter.default.addObserver(self, selector: #selector(windowMoved(_:)),
                                                name: NSWindow.didMoveNotification, object: win)
+        // Keep it centered under the camera as it grows/shrinks while snapped.
+        NotificationCenter.default.addObserver(self, selector: #selector(windowResized(_:)),
+                                               name: NSWindow.didResizeNotification, object: win)
+
+        // Restore snapped-under-camera mode across launches.
+        if UserDefaults.standard.bool(forKey: snappedKey) {
+            snappedUnderCamera = true
+            DispatchQueue.main.async { [weak self] in self?.positionUnderCamera() }
+        }
 
         // Print the window flags for the phase-0 gate.
         let cb = win.collectionBehavior
@@ -85,8 +98,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func windowMoved(_ note: Notification) {
+        // Ignore moves we triggered ourselves (snap / recenter).
+        if repositioning { return }
+        // A manual drag breaks the snap so the user can place it freely.
+        if snappedUnderCamera {
+            snappedUnderCamera = false
+            UserDefaults.standard.set(false, forKey: snappedKey)
+            snapMenuItem?.state = .off
+        }
         let o = window.frame.origin
         UserDefaults.standard.set("\(o.x),\(o.y)", forKey: originKey)
+    }
+
+    @objc private func windowResized(_ note: Notification) {
+        if snappedUnderCamera { positionUnderCamera() }
+    }
+
+    // The built-in (notched) display if present, else the main screen.
+    private func cameraScreen() -> NSScreen? {
+        if #available(macOS 12.0, *),
+           let notched = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) {
+            return notched
+        }
+        return NSScreen.main
+    }
+
+    // Center the window horizontally under the camera/notch, tucked just below the
+    // menu bar. Re-applied on resize so it stays centered in both pill and card states.
+    private func positionUnderCamera() {
+        guard let win = window, let screen = cameraScreen() else { return }
+        let size = win.frame.size
+        let x = (screen.frame.midX - size.width / 2).rounded()
+        let topGap: CGFloat = 3
+        let y = (screen.visibleFrame.maxY - size.height - topGap).rounded()
+        repositioning = true
+        win.setFrameOrigin(NSPoint(x: x, y: y))
+        UserDefaults.standard.set("\(x),\(y)", forKey: originKey)
+        DispatchQueue.main.async { [weak self] in self?.repositioning = false }
+    }
+
+    @objc private func snapUnderCamera() {
+        // Unobtrusive: collapse to the compact pill, then center under the camera.
+        if model.expanded {
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { model.expanded = false }
+        }
+        snappedUnderCamera = true
+        UserDefaults.standard.set(true, forKey: snappedKey)
+        snapMenuItem?.state = .on
+        if !window.isVisible { window.makeKeyAndOrderFront(nil) }
+        DispatchQueue.main.async { [weak self] in self?.positionUnderCamera() }
     }
 
     private func buildStatusItem() {
@@ -94,6 +154,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.button?.title = "MI"
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Show / Hide", action: #selector(toggleVisible), keyEquivalent: "s"))
+
+        let snapItem = NSMenuItem(title: "Snap under camera", action: #selector(snapUnderCamera), keyEquivalent: "c")
+        snapItem.state = snappedUnderCamera ? .on : .off
+        menu.addItem(snapItem)
+        snapMenuItem = snapItem
 
         let intervalMenu = NSMenu()
         for (title, val) in [("1 second", 1.0), ("2 seconds", 2.0), ("5 seconds", 5.0)] {

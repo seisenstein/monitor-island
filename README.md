@@ -39,8 +39,9 @@ ID, which this project intentionally does not use.
    `xattr -dr com.apple.quarantine /Applications/MonitorIsland.app` in Terminal) avoids that.
 
 Look for the `MI` item in the menu bar and the floating island near the top of the screen.
-Click the island to expand or collapse it. Drag it anywhere. The menu has Show/Hide, the
-refresh interval (1, 2, 5 seconds), a local-model overlay toggle, and Quit.
+Click the island to expand or collapse it. Drag it anywhere. The menu has Show/Hide, Snap under
+camera (centers it just below the notch/camera and keeps it centered as it expands; dragging it
+unsnaps), the refresh interval (1, 2, 5 seconds), a local-model overlay toggle, and Quit.
 
 ## Which sudoless API backs each metric
 
