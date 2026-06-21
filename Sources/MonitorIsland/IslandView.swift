@@ -191,9 +191,24 @@ struct IslandView: View {
                 WorkloadDot(on: hasClaude, color: Theme.energy)
                 WorkloadDot(on: hasCodex, color: Theme.teal)
             }
+            snapButton
         }
         .padding(.horizontal, 15).padding(.vertical, 10)
         .fixedSize()
+    }
+
+    // In-island control to center the island under the camera (notch). Tapping it
+    // does not toggle expand/collapse because a Button consumes the tap.
+    var snapButton: some View {
+        Button { model.onSnapToggle?() } label: {
+            Image(systemName: "arrow.up.to.line")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(model.snapped ? Theme.accent : Theme.textFaint)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(model.snapped ? "Unsnap (drag freely)" : "Snap under camera")
     }
 
     func metric(_ label: String, _ value: Int, _ suffix: String, _ color: Color) -> some View {
@@ -222,6 +237,7 @@ struct IslandView: View {
                 RingGauge(value: s.memUsedPercent, accent: Theme.energy, caption: "MEM")
             }
             .frame(maxWidth: .infinity)
+            .overlay(alignment: .topTrailing) { snapButton.offset(x: 6, y: -6) }
 
             // Core-type split (Super / Performance / ...).
             HStack(spacing: 18) {

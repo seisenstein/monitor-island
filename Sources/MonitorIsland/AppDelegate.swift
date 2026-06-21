@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         FontLoader.register()
+        model.onSnapToggle = { [weak self] in self?.toggleSnap() }
         buildWindow()
         buildStatusItem()
         model.start()
@@ -59,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Restore snapped-under-camera mode across launches.
         if UserDefaults.standard.bool(forKey: snappedKey) {
-            snappedUnderCamera = true
+            setSnapped(true)
             DispatchQueue.main.async { [weak self] in self?.positionUnderCamera() }
         }
 
@@ -101,11 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Ignore moves we triggered ourselves (snap / recenter).
         if repositioning { return }
         // A manual drag breaks the snap so the user can place it freely.
-        if snappedUnderCamera {
-            snappedUnderCamera = false
-            UserDefaults.standard.set(false, forKey: snappedKey)
-            snapMenuItem?.state = .off
-        }
+        if snappedUnderCamera { setSnapped(false) }
         let o = window.frame.origin
         UserDefaults.standard.set("\(o.x),\(o.y)", forKey: originKey)
     }
@@ -137,14 +134,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.async { [weak self] in self?.repositioning = false }
     }
 
-    @objc private func snapUnderCamera() {
+    private func setSnapped(_ on: Bool) {
+        snappedUnderCamera = on
+        model.snapped = on
+        snapMenuItem?.state = on ? .on : .off
+        UserDefaults.standard.set(on, forKey: snappedKey)
+    }
+
+    // Toggled from the menu item AND the in-island snap button.
+    @objc private func toggleSnap() {
+        if snappedUnderCamera {
+            setSnapped(false)   // release; leave the island where it is
+            return
+        }
         // Unobtrusive: collapse to the compact pill, then center under the camera.
         if model.expanded {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { model.expanded = false }
         }
-        snappedUnderCamera = true
-        UserDefaults.standard.set(true, forKey: snappedKey)
-        snapMenuItem?.state = .on
+        setSnapped(true)
         if !window.isVisible { window.makeKeyAndOrderFront(nil) }
         DispatchQueue.main.async { [weak self] in self?.positionUnderCamera() }
     }
@@ -155,7 +162,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Show / Hide", action: #selector(toggleVisible), keyEquivalent: "s"))
 
-        let snapItem = NSMenuItem(title: "Snap under camera", action: #selector(snapUnderCamera), keyEquivalent: "c")
+        let snapItem = NSMenuItem(title: "Snap under camera", action: #selector(toggleSnap), keyEquivalent: "c")
         snapItem.state = snappedUnderCamera ? .on : .off
         menu.addItem(snapItem)
         snapMenuItem = snapItem

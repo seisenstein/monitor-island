@@ -9,6 +9,8 @@ final class IslandModel: ObservableObject {
     @Published var snap = Snapshot()
     @Published var expanded = false
     @Published var showOverlay = true
+    @Published var snapped = false                 // centered under the camera
+    var onSnapToggle: (() -> Void)?                // wired by AppDelegate
 
     let smoother = Smoother()
 
