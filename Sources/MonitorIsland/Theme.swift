@@ -1,63 +1,50 @@
 import SwiftUI
 
-// Color palette and font helpers for the Monitor Island redesign.
-// Hues are lifted from the prompt-weaver identity and brightened for dark glass legibility.
+// Three-color palette drawn from the Sierra mountain photo: snow white, deep sky
+// blue, dark slate. Everything else is an opacity of one of these three.
+// Anthropic-clean: SF Pro Rounded for all type (no serif, no mono face).
 enum Theme {
-    // Accent hues (brightened for dark glass).
-    static let teal    = Color(red: 0x46/255.0, green: 0xD6/255.0, blue: 0xDB/255.0) // #46D6DB
-    static let energy  = Color(red: 0xE6/255.0, green: 0xA7/255.0, blue: 0x65/255.0) // #E6A765
-    static let success = Color(red: 0x9F/255.0, green: 0xCB/255.0, blue: 0x72/255.0) // #9FCB72
-    static let amber   = Color(red: 0xE0/255.0, green: 0xB1/255.0, blue: 0x4E/255.0) // #E0B14E
-    static let danger  = Color(red: 0xE2/255.0, green: 0x70/255.0, blue: 0x5C/255.0) // #E2705C
+    // The 3 colors.
+    static let sky   = Color(red: 0x4F/255.0, green: 0x97/255.0, blue: 0xEA/255.0) // #4F97EA deep sky blue
+    static let snow  = Color(red: 0xEE/255.0, green: 0xF3/255.0, blue: 0xF9/255.0) // #EEF3F9 snow white
+    static let slate = Color(red: 0x16/255.0, green: 0x20/255.0, blue: 0x2A/255.0) // #16202A dark slate
 
-    // Warm cream text.
-    static let textPrimary   = Color(red: 0xF2/255.0, green: 0xEC/255.0, blue: 0xE0/255.0) // #F2ECE0
-    static let textSecondary = Color(red: 0xBD/255.0, green: 0xB6/255.0, blue: 0xA8/255.0) // #BDB6A8
-    static let textFaint     = Color(red: 0x8C/255.0, green: 0x86/255.0, blue: 0x7C/255.0) // #8C867C
+    // The single accent (all gauges / sparkline / dots use it).
+    static let accent = sky
 
-    // Warm espresso glass tint (overlaid on the material/glass).
-    static let glassTint = Color(red: 0x26/255.0, green: 0x23/255.0, blue: 0x1D/255.0) // rgb(38,35,29)
+    // Named aliases kept so the views compile; all map into the 3-color palette.
+    static let teal    = sky
+    static let energy  = sky
+    static let success = sky
+    static let amber   = sky
+    static let danger  = sky
 
-    // Faint warm specular highlight for the border.
-    static let specular = Color(red: 1.0, green: 0.97, blue: 0.92)
+    // Text = snow at three opacities.
+    static let textPrimary   = snow
+    static let textSecondary = snow.opacity(0.66)
+    static let textFaint     = snow.opacity(0.40)
 
-    // Warm-tinted shadow.
-    static let shadow = Color(red: 40/255.0, green: 30/255.0, blue: 15/255.0)
+    // Cool slate glass tint (overlaid on the material/glass).
+    static let glassTint = slate
+
+    // Snow specular highlight for the border.
+    static let specular = snow
+
+    // Neutral shadow.
+    static let shadow = Color.black
 
     static let cornerRadius: CGFloat = 22
 }
 
 extension Font {
-    // Fraunces (serif) for big captions / section titles. Falls back to system serif.
-    // Use explicit named instances per weight: SwiftUI's .weight() does not reliably
-    // pick a variable-font instance for a custom face, so we map to concrete PostScript names.
-    static func brand(_ size: CGFloat, weight: Font.Weight = .bold) -> Font {
-        if FontLoader.brandAvailable {
-            let name: String
-            switch weight {
-            case .black, .heavy: name = "Fraunces-Black"
-            case .bold:          name = "Fraunces-Bold"
-            case .semibold:      name = "Fraunces-SemiBold"
-            case .medium:        name = "Fraunces-SemiBold"
-            case .light, .thin, .ultraLight: name = "Fraunces-Light"
-            default:             name = "Fraunces-Regular"
-            }
-            return .custom(name, size: size)
-        }
-        return .system(size: size, weight: weight, design: .serif)
+    // Labels / captions: SF Pro Rounded (clean Apple sans, no serif).
+    static func brand(_ size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
     }
 
-    // JetBrains Mono for numbers / values. Falls back to system monospaced.
-    static func mono(_ size: CGFloat, weight: Font.Weight = .regular) -> Font {
-        if FontLoader.monoAvailable {
-            let name: String
-            switch weight {
-            case .bold, .heavy, .black: name = "JetBrainsMono-Bold"
-            case .medium, .semibold:    name = "JetBrainsMono-Medium"
-            default:                    name = "JetBrainsMono-Regular"
-            }
-            return .custom(name, size: size)
-        }
-        return .system(size: size, weight: weight, design: .monospaced)
+    // Numbers / values: also SF Pro Rounded; callers add .monospacedDigit() so the
+    // digits stay tabular (no width jitter) while ticking.
+    static func mono(_ size: CGFloat, weight: Font.Weight = .medium) -> Font {
+        .system(size: size, weight: weight, design: .rounded)
     }
 }

@@ -307,17 +307,17 @@ struct IslandView: View {
                 HStack(spacing: 7) {
                     Circle().fill(color).frame(width: 6, height: 6)
                     Text(w.count > 1 ? "\(w.label) x\(w.count)" : w.label)
-                        .font(.brand(10, weight: .semibold))
+                        .font(.brand(12, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                     if canDrill {
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 7, weight: .bold))
+                            .font(.system(size: 8, weight: .bold))
                             .foregroundStyle(Theme.textFaint)
                             .rotationEffect(.degrees(isOpen ? 90 : 0))
                     }
                     Spacer(minLength: 4)
                     Text(fmtMem(w.memoryMB))
-                        .font(.mono(9, weight: .regular))
+                        .font(.mono(11, weight: .medium))
                         .monospacedDigit()
                         .foregroundStyle(Theme.textSecondary)
                 }
@@ -326,23 +326,24 @@ struct IslandView: View {
             .buttonStyle(.plain)
 
             if canDrill && isOpen {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 7) {
                     ForEach(w.instances, id: \.pid) { inst in
-                        HStack(spacing: 6) {
-                            Circle().fill(color.opacity(0.5)).frame(width: 4, height: 4)
+                        HStack(spacing: 8) {
+                            Circle().fill(color.opacity(0.55)).frame(width: 5, height: 5)
                             Text(inst.label)
-                                .font(.mono(9, weight: .regular))
+                                .font(.mono(11.5, weight: .regular))
                                 .foregroundStyle(Theme.textSecondary)
                                 .lineLimit(1).truncationMode(.middle)
-                            Spacer(minLength: 4)
+                            Spacer(minLength: 6)
                             Text(fmtMem(inst.memoryMB))
-                                .font(.mono(9, weight: .regular))
+                                .font(.mono(11.5, weight: .medium))
                                 .monospacedDigit()
-                                .foregroundStyle(Theme.textFaint)
+                                .foregroundStyle(Theme.textSecondary)
                         }
                     }
                 }
-                .padding(.leading, 13)
+                .padding(.leading, 15)
+                .padding(.top, 2)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -352,11 +353,11 @@ struct IslandView: View {
         HStack(spacing: 7) {
             Circle().fill(color).frame(width: 6, height: 6)
             Text(label)
-                .font(.brand(10, weight: .semibold))
+                .font(.brand(12, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Spacer(minLength: 4)
             Text(value)
-                .font(.mono(9, weight: .regular))
+                .font(.mono(11, weight: .medium))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textSecondary)
         }

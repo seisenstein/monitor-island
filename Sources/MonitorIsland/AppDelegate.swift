@@ -16,20 +16,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildWindow() {
-        let hosting = NSHostingView(rootView: IslandView(model: model))
-        hosting.translatesAutoresizingMaskIntoConstraints = true
-
-        let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 220, height: 60),
-            styleMask: [.borderless],
-            backing: .buffered, defer: false)
+        // NSHostingController auto-sizes the borderless window to the SwiftUI content
+        // (so it grows/shrinks on expand with no clipped square edges). The transparent
+        // padding gives the rounded SwiftUI shadow room; the window shadow is OFF so
+        // there are no rectangular shadow corners poking out.
+        let host = NSHostingController(rootView: IslandView(model: model).padding(20))
+        let win = NSWindow(contentViewController: host)
+        win.styleMask = [.borderless]
         win.isOpaque = false
         win.backgroundColor = .clear
-        win.hasShadow = true
+        win.hasShadow = false
         win.level = .floating
         win.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         win.isMovableByWindowBackground = true
-        win.contentView = hosting
         win.contentView?.wantsLayer = true
 
         // Restore position, with off-screen fallback.
