@@ -16,19 +16,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func buildWindow() {
-        // NSHostingController auto-sizes the borderless window to the SwiftUI content
-        // (so it grows/shrinks on expand with no clipped square edges). The transparent
-        // padding gives the rounded SwiftUI shadow room; the window shadow is OFF so
-        // there are no rectangular shadow corners poking out.
-        let host = NSHostingController(rootView: IslandView(model: model).padding(20))
-        let win = NSWindow(contentViewController: host)
-        win.styleMask = [.borderless]
+        // Build a window that is borderless FROM CREATION. Using
+        // NSWindow(contentViewController:) creates a titled window and then mutating
+        // styleMask to .borderless can leave a frame/border artifact (the spurious
+        // rectangular outline). Instead we construct a borderless window directly and
+        // attach the hosting controller afterward. The transparent padding (>= shadow
+        // radius 18 + y offset 8) gives the rounded SwiftUI shadow room so it is fully
+        // contained and never clips into a hard line; the window shadow is OFF so there
+        // are no rectangular shadow corners poking out.
+        let host = NSHostingController(rootView: IslandView(model: model).padding(28))
+        let win = NSWindow(contentRect: .zero, styleMask: [.borderless],
+                           backing: .buffered, defer: false)
+        win.contentViewController = host
         win.isOpaque = false
         win.backgroundColor = .clear
         win.hasShadow = false
         win.level = .floating
         win.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         win.isMovableByWindowBackground = true
+        // Ensure the hosting view layer is fully transparent so no opaque rectangle shows.
+        host.view.wantsLayer = true
+        host.view.layer?.backgroundColor = NSColor.clear.cgColor
         win.contentView?.wantsLayer = true
 
         // Restore position, with off-screen fallback.
