@@ -183,9 +183,7 @@ struct IslandView: View {
         HStack(spacing: 11) {
             metric("GPU", Int(s.gpu.rounded()), "%", Theme.teal)
             metric("MEM", Int(s.memUsedPercent.rounded()), "%", Theme.energy)
-            if snap.cpuTempC != nil {
-                metric("TEMP", Int(s.cpuTempF.rounded()), "\u{00b0}", tempColorF(s.cpuTempF))
-            }
+            metric("CPU", Int(s.cpuTotal.rounded()), "%", Theme.success)
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Theme.textFaint)
