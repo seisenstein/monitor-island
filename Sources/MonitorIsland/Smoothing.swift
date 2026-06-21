@@ -22,6 +22,11 @@ final class Smoother: ObservableObject {
     @Published var netDown: Double = 0
     @Published var netUp: Double = 0
 
+    // Smoothed workload memory: aggregate per label, and per individual instance pid.
+    @Published var workloadMem: [String: Double] = [:]
+    @Published var instanceMem: [Int32: Double] = [:]
+    @Published var localModelMem: Double = 0
+
     // GPU history ring for the sparkline (smoothed samples pushed at the tick rate).
     @Published var gpuHistory: [Double] = []
     private let historyCap = 60
@@ -36,6 +41,9 @@ final class Smoother: ObservableObject {
     private var tCpuTempF: Double = 0
     private var tNetDown: Double = 0
     private var tNetUp: Double = 0
+    private var tWorkloadMem: [String: Double] = [:]
+    private var tInstanceMem: [Int32: Double] = [:]
+    private var tLocalModelMem: Double = 0
 
     private var timer: DispatchSourceTimer?
 
@@ -70,6 +78,20 @@ final class Smoother: ObservableObject {
         tNetDown = s.netDownBytesPerSec
         tNetUp = s.netUpBytesPerSec
 
+        // Workload memory targets (aggregate per label + per-instance per pid).
+        var wm: [String: Double] = [:]
+        var im: [Int32: Double] = [:]
+        for w in s.workloads {
+            wm[w.label] = w.memoryMB
+            for inst in w.instances { im[inst.pid] = inst.memoryMB }
+        }
+        tWorkloadMem = wm
+        tInstanceMem = im
+        tLocalModelMem = s.localModelMemoryMB ?? 0
+        // Drop displayed entries for processes that no longer exist.
+        workloadMem = workloadMem.filter { wm[$0.key] != nil }
+        instanceMem = instanceMem.filter { im[$0.key] != nil }
+
         // Push a history sample (the displayed gpu glides; the ring stores its target
         // sampled at tick rate so the sparkline reflects real cadence).
         gpuHistory.append(s.gpuPercent)
@@ -89,6 +111,9 @@ final class Smoother: ObservableObject {
         cpuTempF = tCpuTempF
         netDown = tNetDown
         netUp = tNetUp
+        workloadMem = tWorkloadMem
+        instanceMem = tInstanceMem
+        localModelMem = tLocalModelMem
     }
 
     // Advance one frame manually (used by --shot to settle before capture).
@@ -107,5 +132,14 @@ final class Smoother: ObservableObject {
         cpuTempF += (tCpuTempF - cpuTempF) * k
         netDown += (tNetDown - netDown) * k
         netUp += (tNetUp - netUp) * k
+        for (key, target) in tWorkloadMem {
+            let cur = workloadMem[key] ?? target
+            workloadMem[key] = cur + (target - cur) * k
+        }
+        for (pid, target) in tInstanceMem {
+            let cur = instanceMem[pid] ?? target
+            instanceMem[pid] = cur + (target - cur) * k
+        }
+        localModelMem += (tLocalModelMem - localModelMem) * k
     }
 }

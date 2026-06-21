@@ -248,7 +248,7 @@ struct IslandView: View {
                 Rectangle().fill(Theme.textFaint.opacity(0.18)).frame(height: 1)
                 if let name = snap.localModelName {
                     workloadRow("Local model",
-                                name + (snap.localModelMemoryMB.map { "  " + fmtMem($0) } ?? ""),
+                                name + (snap.localModelMemoryMB != nil ? "  " + fmtMem(s.localModelMem) : ""),
                                 Theme.success)
                 }
                 ForEach(snap.workloads, id: \.label) { w in
@@ -316,9 +316,10 @@ struct IslandView: View {
                             .rotationEffect(.degrees(isOpen ? 90 : 0))
                     }
                     Spacer(minLength: 4)
-                    Text(fmtMem(w.memoryMB))
+                    Text(fmtMem(s.workloadMem[w.label] ?? w.memoryMB))
                         .font(.mono(11, weight: .medium))
                         .monospacedDigit()
+                        .contentTransition(.numericText())
                         .foregroundStyle(Theme.textSecondary)
                 }
                 .contentShape(Rectangle())
@@ -335,9 +336,10 @@ struct IslandView: View {
                                 .foregroundStyle(Theme.textSecondary)
                                 .lineLimit(1).truncationMode(.middle)
                             Spacer(minLength: 6)
-                            Text(fmtMem(inst.memoryMB))
+                            Text(fmtMem(s.instanceMem[inst.pid] ?? inst.memoryMB))
                                 .font(.mono(11.5, weight: .medium))
                                 .monospacedDigit()
+                                .contentTransition(.numericText())
                                 .foregroundStyle(Theme.textSecondary)
                         }
                     }
@@ -359,6 +361,7 @@ struct IslandView: View {
             Text(value)
                 .font(.mono(11, weight: .medium))
                 .monospacedDigit()
+                .contentTransition(.numericText())
                 .foregroundStyle(Theme.textSecondary)
         }
     }
