@@ -30,10 +30,20 @@ enum Shot {
         for _ in 0..<40 { model.smoother.step() }
         model.smoother.snapToTargets()
 
-        let content = IslandView(model: model, preExpand: ["Claude Code"])
-            .frame(width: 292)
-            .padding(28)
-            .background(Color(red: 0.05, green: 0.06, blue: 0.09))
+        // Preview over the real mountain photo so the light glass can be judged on a
+        // representative backdrop.
+        let bg: AnyView = {
+            if let img = NSImage(contentsOfFile: "/tmp/mountains.jpg") {
+                return AnyView(Image(nsImage: img).resizable().scaledToFill())
+            }
+            return AnyView(Color(red: 0.10, green: 0.16, blue: 0.24))
+        }()
+        let content = ZStack {
+            bg
+            IslandView(model: model, preExpand: ["Claude Code"]).frame(width: 292)
+        }
+        .frame(width: 380, height: 600)
+        .clipped()
 
         let renderer = ImageRenderer(content: content)
         renderer.scale = 2.0

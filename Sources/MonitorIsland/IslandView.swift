@@ -8,27 +8,31 @@ struct RingGauge: View {
 
     var body: some View {
         ZStack {
-            Circle().stroke(Theme.textFaint.opacity(0.22), lineWidth: 6)
+            Circle().stroke(Theme.track, lineWidth: 6)
             Circle()
                 .trim(from: 0, to: CGFloat(min(max(value, 0), 100) / 100.0))
                 .stroke(
                     AngularGradient(
-                        gradient: Gradient(colors: [accent.opacity(0.65), accent]),
+                        gradient: Gradient(colors: [accent.opacity(0.7), accent]),
                         center: .center,
                         startAngle: .degrees(-90),
                         endAngle: .degrees(270)),
                     style: StrokeStyle(lineWidth: 6, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 1) {
-                Text("\(Int(value.rounded()))")
-                    .font(.mono(16, weight: .bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .foregroundStyle(Theme.textPrimary)
+                HStack(alignment: .firstTextBaseline, spacing: 1) {
+                    Text("\(Int(value.rounded()))")
+                        .font(.mono(16, weight: .bold))
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                    Text("%")
+                        .font(.mono(10, weight: .semibold))
+                }
+                .foregroundStyle(Theme.textPrimary)
                 Text(caption)
                     .font(.brand(9, weight: .semibold))
                     .tracking(0.6)
-                    .foregroundStyle(accent.opacity(0.95))
+                    .foregroundStyle(accent)
             }
         }
         .frame(width: 62, height: 62)
@@ -138,7 +142,7 @@ struct IslandView: View {
             RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [Theme.specular.opacity(0.30), Theme.specular.opacity(0.06)],
+                        colors: [Theme.specular.opacity(0.55), Theme.specular.opacity(0.12)],
                         startPoint: .topLeading, endPoint: .bottomTrailing),
                     lineWidth: 1)
         )
@@ -156,7 +160,8 @@ struct IslandView: View {
         }
     }
 
-    // Real Liquid Glass on macOS 26, with a warm tint overlay. Material fallback below.
+    // Real Liquid Glass on macOS 26 (almost clear), with a very light cool tint so it
+    // reads as light-mode frosted glass. Light material fallback below.
     @ViewBuilder
     var glassBackground: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
@@ -164,12 +169,12 @@ struct IslandView: View {
             shape
                 .fill(.clear)
                 .glassEffect(in: shape)
-                .overlay(shape.fill(Theme.glassTint.opacity(0.45)))
+                .overlay(shape.fill(Theme.glassTint.opacity(Theme.glassTintOpacity)))
         } else {
             shape
                 .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .dark)
-                .overlay(shape.fill(Theme.glassTint.opacity(0.55)))
+                .environment(\.colorScheme, .light)
+                .overlay(shape.fill(Theme.glassTint.opacity(Theme.glassTintOpacity + 0.1)))
         }
     }
 
