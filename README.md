@@ -14,7 +14,7 @@ frameworks that macmon, mactop, and Stats use.
 Get the latest DMG from the GitHub release:
 
 - https://github.com/seisenstein/monitor-island/releases/latest
-- Direct: https://github.com/seisenstein/monitor-island/releases/download/v1.0.0/MonitorIsland.dmg
+- Direct: https://github.com/seisenstein/monitor-island/releases/download/v1.1.0/MonitorIsland.dmg
 
 ## Requirements: Apple Silicon only
 
