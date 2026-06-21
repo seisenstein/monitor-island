@@ -142,7 +142,7 @@ struct IslandView: View {
             RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
                 .stroke(
                     LinearGradient(
-                        colors: [Theme.specular.opacity(0.55), Theme.specular.opacity(0.12)],
+                        colors: [Theme.specular.opacity(0.30), Theme.specular.opacity(0.06)],
                         startPoint: .topLeading, endPoint: .bottomTrailing),
                     lineWidth: 1)
         )
@@ -173,7 +173,7 @@ struct IslandView: View {
         } else {
             shape
                 .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, .light)
+                .environment(\.colorScheme, .dark)
                 .overlay(shape.fill(Theme.glassTint.opacity(Theme.glassTintOpacity + 0.1)))
         }
     }

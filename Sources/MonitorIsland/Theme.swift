@@ -1,14 +1,13 @@
 import SwiftUI
 
-// Light, almost-clear, tinted glassmorphic palette. Three colors drawn from the
-// Sierra photo: snow white, deep sky blue, dark slate. Light-mode feel: dark slate
-// text on a barely-tinted clear glass, with sky blue as the single accent.
-// All type is SF Pro Rounded (no serif, no mono face).
+// Three-color palette from the Sierra photo: snow white, deep sky blue, dark slate.
+// Dark glass (the version that reads well): snow text on a dark slate-tinted glass,
+// sky blue as the single accent. All type is SF Pro Rounded (no serif, no mono face).
 enum Theme {
     // The 3 colors.
-    static let sky   = Color(red: 0x2E/255.0, green: 0x7B/255.0, blue: 0xD6/255.0) // #2E7BD6 deep sky blue (reads on light)
-    static let snow  = Color(red: 0xF4/255.0, green: 0xF8/255.0, blue: 0xFD/255.0) // #F4F8FD snow white
-    static let slate = Color(red: 0x14/255.0, green: 0x1E/255.0, blue: 0x2A/255.0) // #141E2A dark slate (ink)
+    static let sky   = Color(red: 0x4F/255.0, green: 0x97/255.0, blue: 0xEA/255.0) // #4F97EA sky blue (on dark)
+    static let snow  = Color(red: 0xEE/255.0, green: 0xF3/255.0, blue: 0xF9/255.0) // #EEF3F9 snow white
+    static let slate = Color(red: 0x16/255.0, green: 0x20/255.0, blue: 0x2A/255.0) // #16202A dark slate
 
     // Single accent (gauges / sparkline / dots).
     static let accent = sky
@@ -20,21 +19,20 @@ enum Theme {
     static let amber   = sky
     static let danger  = sky
 
-    // Text = dark slate ink at three opacities (light-mode glass).
-    static let textPrimary   = slate
-    static let textSecondary = slate.opacity(0.62)
-    static let textFaint     = slate.opacity(0.42)
+    // Text = snow at three opacities.
+    static let textPrimary   = snow
+    static let textSecondary = snow.opacity(0.66)
+    static let textFaint     = snow.opacity(0.40)
 
-    // Very light, barely-there tint laid over the clear glass (keeps it readable
-    // while staying "almost clear"). A pale cool snow.
-    static let glassTint = Color(red: 0xEC/255.0, green: 0xF2/255.0, blue: 0xFA/255.0) // #ECF2FA
-    static let glassTintOpacity: Double = 0.42
+    // Dark slate glass tint laid over the clear glass.
+    static let glassTint = slate
+    static let glassTintOpacity: Double = 0.45
 
-    // Ring track / faint structural lines on light glass.
-    static let track = slate.opacity(0.12)
+    // Ring track / faint structural lines on dark glass.
+    static let track = snow.opacity(0.16)
 
-    // Bright specular highlight for the top edge of the border.
-    static let specular = Color.white
+    // Snow specular highlight for the border.
+    static let specular = snow
 
     // Soft neutral shadow.
     static let shadow = Color.black
