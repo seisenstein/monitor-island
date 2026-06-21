@@ -20,17 +20,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // NSWindow(contentViewController:) creates a titled window and then mutating
         // styleMask to .borderless can leave a frame/border artifact (the spurious
         // rectangular outline). Instead we construct a borderless window directly and
-        // attach the hosting controller afterward. The transparent padding (>= shadow
-        // radius 18 + y offset 8) gives the rounded SwiftUI shadow room so it is fully
-        // contained and never clips into a hard line; the window shadow is OFF so there
-        // are no rectangular shadow corners poking out.
-        let host = NSHostingController(rootView: IslandView(model: model).padding(28))
+        // attach the hosting controller afterward. The root view has NO transparent
+        // padding, so the window frame hugs the visible glass card exactly (the card
+        // can be dragged flush to the screen edges with no invisible buffer). The drop
+        // shadow is drawn by AppKit (win.hasShadow = true): on a borderless, transparent
+        // window whose content is clipped to a rounded shape, the window shadow follows
+        // the clipped content alpha and is therefore correctly rounded with no buffer.
+        let host = NSHostingController(rootView: IslandView(model: model))
         let win = NSWindow(contentRect: .zero, styleMask: [.borderless],
                            backing: .buffered, defer: false)
         win.contentViewController = host
         win.isOpaque = false
         win.backgroundColor = .clear
-        win.hasShadow = false
+        win.hasShadow = true
         win.level = .floating
         win.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary, .ignoresCycle]
         win.isMovableByWindowBackground = true

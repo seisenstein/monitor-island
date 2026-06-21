@@ -142,8 +142,12 @@ struct IslandView: View {
                         startPoint: .topLeading, endPoint: .bottomTrailing),
                     lineWidth: 1)
         )
+        // The glass background, warm tint, and specular border are all applied BEFORE
+        // this clip, so the rounded corners are truly transparent. No SwiftUI .shadow
+        // here: that required transparent window padding (the invisible drag buffer).
+        // The soft rounded drop shadow is now drawn by AppKit via win.hasShadow = true,
+        // which follows this clipped alpha so the shadow is rounded with zero buffer.
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
-        .shadow(color: Theme.shadow.opacity(0.45), radius: 18, x: 0, y: 8)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
