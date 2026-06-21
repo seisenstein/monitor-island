@@ -1,0 +1,21 @@
+# Build artifacts
+.build/
+dist/
+*.dmg
+
+# Working files
+_todo.md
+_findings_*.md
+_context_*.md
+
+# Local model downloads / scratch
+models/
+*.gguf
+
+# macOS
+.DS_Store
+PRD.md
+
+# Unrelated pre-existing files in this folder
+.claude/
+0*-*.sh

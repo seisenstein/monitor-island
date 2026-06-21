@@ -1,0 +1,72 @@
+import Foundation
+
+// One core-type (perflevel) usage entry. Name is read live from
+// hw.perflevelN.name (e.g. "Super", "Performance", "Efficiency").
+struct CoreTypeUsage: Codable {
+    var name: String
+    var logicalCount: Int
+    var usagePercent: Double   // 0..100 average across this cluster
+}
+
+struct TempSensor: Codable {
+    var name: String
+    var celsius: Double
+}
+
+struct WorkloadEntry: Codable {
+    var label: String          // "Claude Code", "Codex", "LM Studio", "llama-server", ...
+    var count: Int
+    var cpuPercent: Double      // aggregate, best-effort
+    var memoryMB: Double        // aggregate resident
+    var detail: String?         // e.g. model name, kind
+}
+
+// The single observable snapshot the UI reads and --dump serializes.
+struct Snapshot: Codable {
+    var timestamp: String = ""
+
+    // CPU
+    var cpuTotalPercent: Double = 0
+    var coreTypes: [CoreTypeUsage] = []
+
+    // Memory (GB unless noted)
+    var memTotalGB: Double = 0
+    var memUsedGB: Double = 0
+    var memUsedPercent: Double = 0
+    var headroomGB: Double = 0
+    var swapUsedGB: Double = 0
+    var swapTotalGB: Double = 0
+    var memoryPressure: Bool = false
+
+    // GPU
+    var gpuPercent: Double = 0
+    var gpuInUseMemMB: Double? = nil
+
+    // Temperature
+    var temps: [TempSensor] = []
+    var cpuTempC: Double? = nil
+    var gpuTempC: Double? = nil
+    var tempBestEffort: Bool = false   // true if cluster mapping not confidently verified
+
+    // Power (watts)
+    var cpuWatts: Double? = nil
+    var gpuWatts: Double? = nil
+    var aneWatts: Double? = nil
+    var aneEstimateNote: String? = nil
+    var packageWatts: Double? = nil
+    var ramWatts: Double? = nil
+
+    // Network (bytes/sec)
+    var netDownBytesPerSec: Double = 0
+    var netUpBytesPerSec: Double = 0
+
+    // Workloads
+    var workloads: [WorkloadEntry] = []
+    var localModelName: String? = nil
+    var localModelMemoryMB: Double? = nil
+
+    var chip: String = ""
+}
+
+func round1(_ v: Double) -> Double { (v * 10).rounded() / 10 }
+func round2(_ v: Double) -> Double { (v * 100).rounded() / 100 }
