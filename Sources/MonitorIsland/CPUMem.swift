@@ -162,8 +162,8 @@ final class CPUMemSampler {
         prevSwapUsed = swapUsed
         let pressure = swapGrowing || usedPct > 90.0
 
-        return MemReading(totalGB: round1(totalGB), usedGB: round1(usedGB),
-                          usedPercent: round1(usedPct), headroomGB: round1(headroom),
+        return MemReading(totalGB: round2(totalGB), usedGB: round2(usedGB),
+                          usedPercent: round1(usedPct), headroomGB: round2(headroom),
                           swapUsedGB: round2(Double(swapUsed) / gb),
                           swapTotalGB: round2(Double(swapTotal) / gb),
                           pressure: pressure)

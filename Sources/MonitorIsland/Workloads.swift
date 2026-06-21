@@ -81,6 +81,29 @@ final class WorkloadSampler {
         return Double(info.ri_resident_size) / (1024.0 * 1024.0)
     }
 
+    // Current working directory of a pid (sudoless, own processes), used to label
+    // an individual session (e.g. a Claude Code session by its project folder).
+    private func cwd(for pid: Int32) -> String? {
+        var vpi = proc_vnodepathinfo()
+        let sz = Int32(MemoryLayout<proc_vnodepathinfo>.stride)
+        let r = proc_pidinfo(pid, 9 /* PROC_PIDVNODEPATHINFO */, 0, &vpi, sz)
+        guard r > 0 else { return nil }
+        let path = withUnsafeBytes(of: &vpi.pvi_cdir.vip_path) { raw -> String in
+            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+        }
+        return path.isEmpty ? nil : path
+    }
+
+    private func instanceLabel(pid: Int32) -> String {
+        let base: String
+        if let c = cwd(for: pid) {
+            base = (c == NSHomeDirectory()) ? "~" : (c as NSString).lastPathComponent
+        } else {
+            base = "session"
+        }
+        return "\(base) \u{00b7} \(pid)"   // e.g. "files \u{00b7} 45049"
+    }
+
     private func scanProcs() -> [ProcInfo] {
         var out: [ProcInfo] = []
         for pid in allPids() {
@@ -95,13 +118,15 @@ final class WorkloadSampler {
 
     func sample() -> Result {
         let procs = scanProcs()
-        var groups: [String: (count: Int, mem: Double, detail: String?)] = [:]
+        var groups: [String: (count: Int, mem: Double, detail: String?, instances: [WorkloadInstance])] = [:]
 
-        func add(_ label: String, mem: Double, detail: String? = nil) {
-            var g = groups[label] ?? (0, 0, nil)
+        func add(_ label: String, pid: Int32, mem: Double, detail: String? = nil, instLabel: String? = nil) {
+            var g = groups[label] ?? (0, 0, nil, [])
             g.count += 1
             g.mem += mem
             if g.detail == nil { g.detail = detail }
+            g.instances.append(WorkloadInstance(pid: pid, memoryMB: round2(mem),
+                                                label: instLabel ?? instanceLabel(pid: pid)))
             groups[label] = g
         }
 
@@ -120,14 +145,14 @@ final class WorkloadSampler {
             if !isAppBundle && (hay.contains("claude-code") || hay.contains("anthropic-ai/claude") ||
                nameL == "claude" || nameL.hasPrefix("claude.") ||
                (nameL == "node" && hay.contains("/claude"))) {
-                add("Claude Code", mem: p.residentMB)
+                add("Claude Code", pid: p.pid, mem: p.residentMB)
                 continue
             }
             // Codex CLI. Current Codex launches a node wrapper that spawns a native
             // "codex" binary; counting both would double the instance count, so we
             // match only the native binary basename (one per logical instance).
             if !isAppBundle && (nameL == "codex" || nameL.hasPrefix("codex.")) {
-                add("Codex", mem: p.residentMB)
+                add("Codex", pid: p.pid, mem: p.residentMB)
                 continue
             }
             // llama.cpp local model server
@@ -146,13 +171,14 @@ final class WorkloadSampler {
                     localModelName = d
                     localModelMem = (localModelMem ?? 0) + p.residentMB
                 }
-                add("llama-server", mem: p.residentMB, detail: detail)
+                add("llama-server", pid: p.pid, mem: p.residentMB, detail: detail,
+                    instLabel: detail ?? instanceLabel(pid: p.pid))
                 continue
             }
             // LM Studio server helper (CLI side)
             if argsL.contains("lm-studio") || argsL.contains("lmstudio") || nameL.contains("lms") {
                 if !p.path.contains(".app/Contents/MacOS/LM Studio") {
-                    add("LM Studio (server)", mem: p.residentMB)
+                    add("LM Studio (server)", pid: p.pid, mem: p.residentMB)
                 }
                 continue
             }
@@ -161,13 +187,14 @@ final class WorkloadSampler {
         // GUI apps via NSWorkspace.
         for app in NSWorkspace.shared.runningApplications {
             guard let name = app.localizedName else { continue }
-            let mem = residentMB(for: app.processIdentifier)
+            let pid = app.processIdentifier
+            let mem = residentMB(for: pid)
             if name.contains("LM Studio") {
-                add("LM Studio", mem: mem)
+                add("LM Studio", pid: pid, mem: mem, instLabel: name)
             } else if name.contains("Claude") && !name.contains("Claude Code") {
-                add("Claude desktop", mem: mem)
+                add("Claude desktop", pid: pid, mem: mem, instLabel: name)
             } else if name.contains("Codex") {
-                add("Codex desktop", mem: mem)
+                add("Codex desktop", pid: pid, mem: mem, instLabel: name)
             }
         }
 
@@ -178,8 +205,9 @@ final class WorkloadSampler {
 
         var entries: [WorkloadEntry] = []
         for (label, g) in groups.sorted(by: { $0.key < $1.key }) {
+            let insts = g.instances.sorted { $0.memoryMB > $1.memoryMB }
             entries.append(WorkloadEntry(label: label, count: g.count, cpuPercent: 0,
-                                         memoryMB: round1(g.mem), detail: g.detail))
+                                         memoryMB: round2(g.mem), detail: g.detail, instances: insts))
         }
         return Result(entries: entries, localModelName: localModelName, localModelMemoryMB: localModelMem.map(round1))
     }

@@ -20,6 +20,8 @@ APP="$ROOT/dist/$APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
+cp -R "$ROOT/Sources/MonitorIsland/Resources/fonts" "$APP/Contents/Resources/fonts"
+
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

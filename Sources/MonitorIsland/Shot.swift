@@ -6,27 +6,33 @@ import AppKit
 enum Shot {
     @MainActor
     static func render(to path: String) {
+        FontLoader.register()
+
         let sampler = Sampler()
         sampler.prime()
         usleep(400_000)
-        // Build a short real GPU history for the sparkline.
-        var history: [Double] = []
+
+        let model = IslandModel()
+        model.expanded = true
+
+        // Build a short real GPU history for the sparkline and feed the smoother.
         var last = Snapshot()
         for _ in 0..<14 {
             last = sampler.tick(detectWorkloads: false)
-            history.append(last.gpuPercent)
+            model.smoother.setTargets(from: last)
             usleep(120_000)
         }
         last = sampler.tick(detectWorkloads: true) // final tick incl. workloads
-
-        let model = IslandModel()
         model.snap = last
-        model.expanded = true
-        model.gpuHistory = history
+        model.smoother.setTargets(from: last)
 
-        let content = IslandView(model: model)
-            .frame(width: 260)
-            .padding(24)
+        // Drive several smoother frames so the displayed values settle before capture.
+        for _ in 0..<40 { model.smoother.step() }
+        model.smoother.snapToTargets()
+
+        let content = IslandView(model: model, preExpand: ["Claude Code"])
+            .frame(width: 292)
+            .padding(28)
             .background(Color(red: 0.05, green: 0.06, blue: 0.09))
 
         let renderer = ImageRenderer(content: content)

@@ -73,10 +73,12 @@ func runSensors() {
 }
 
 if let i = args.firstIndex(of: "--shot") {
+    FontLoader.register()
     let path = (i + 1 < args.count) ? args[i + 1] : "island.png"
     MainActor.assumeIsolated { Shot.render(to: path) }
     exit(0)
 } else if args.contains("--dump") {
+    FontLoader.register()
     runDump()
     exit(0)
 } else if args.contains("--sensors") {
@@ -91,8 +93,10 @@ if let i = args.firstIndex(of: "--shot") {
 }
 
 // GUI mode.
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.accessory)
-app.run()
+MainActor.assumeIsolated {
+    let app = NSApplication.shared
+    let delegate = AppDelegate()
+    app.delegate = delegate
+    app.setActivationPolicy(.accessory)
+    app.run()
+}

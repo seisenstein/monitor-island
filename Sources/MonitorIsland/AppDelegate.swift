@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var statusItem: NSStatusItem!
@@ -8,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let originKey = "MonitorIsland.windowOrigin"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FontLoader.register()
         buildWindow()
         buildStatusItem()
         model.start()

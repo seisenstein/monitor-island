@@ -3,11 +3,14 @@ import SwiftUI
 import Combine
 
 // Observable model: runs the Sampler on a background queue and publishes snapshots.
+// Feeds the Smoother targets each tick; the view reads smoothed values for animation.
+@MainActor
 final class IslandModel: ObservableObject {
     @Published var snap = Snapshot()
     @Published var expanded = false
     @Published var showOverlay = true
-    @Published var gpuHistory: [Double] = []
+
+    let smoother = Smoother()
 
     private let sampler = Sampler()
     private let queue = DispatchQueue(label: "monitorisland.sampler", qos: .utility)
@@ -16,6 +19,7 @@ final class IslandModel: ObservableObject {
 
     func start() {
         queue.async { [weak self] in self?.sampler.prime() }
+        smoother.start()
         restartTimer()
     }
 
@@ -28,13 +32,15 @@ final class IslandModel: ObservableObject {
         timer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + 0.4, repeating: interval)
+        let sampler = self.sampler
         t.setEventHandler { [weak self] in
-            guard let self = self else { return }
-            let s = self.sampler.tick(detectWorkloads: true)
+            let s = sampler.tick(detectWorkloads: true)
             DispatchQueue.main.async {
-                self.snap = s
-                self.gpuHistory.append(s.gpuPercent)
-                if self.gpuHistory.count > 60 { self.gpuHistory.removeFirst(self.gpuHistory.count - 60) }
+                MainActor.assumeIsolated {
+                    guard let self = self else { return }
+                    self.snap = s
+                    self.smoother.setTargets(from: s)
+                }
             }
         }
         t.resume()

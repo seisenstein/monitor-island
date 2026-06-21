@@ -13,12 +13,20 @@ struct TempSensor: Codable {
     var celsius: Double
 }
 
+// One running instance of a workload (e.g. a single Claude Code session).
+struct WorkloadInstance: Codable {
+    var pid: Int32
+    var memoryMB: Double
+    var label: String          // working-dir basename if known, else "pid N"
+}
+
 struct WorkloadEntry: Codable {
     var label: String          // "Claude Code", "Codex", "LM Studio", "llama-server", ...
     var count: Int
     var cpuPercent: Double      // aggregate, best-effort
     var memoryMB: Double        // aggregate resident
     var detail: String?         // e.g. model name, kind
+    var instances: [WorkloadInstance] = []  // per-process breakdown for drill-down
 }
 
 // The single observable snapshot the UI reads and --dump serializes.
