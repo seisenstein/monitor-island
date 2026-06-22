@@ -49,6 +49,7 @@ unsnaps), the refresh interval (1, 2, 5 seconds), a local-model overlay toggle, 
 |--------|-----|----------|
 | CPU usage, per-core and per-core-type split | `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` plus `hw.perflevelN.*` sysctls | No |
 | Memory used / total / headroom, swap | `host_statistics64(HOST_VM_INFO64)`, `hw.memsize`, `vm.swapusage` | No |
+| Swap used %, memory-pressure level | `vm.swapusage` (exact swap) + `kern.memorystatus_vm_pressure_level` (exact 1/2/4) + `host_statistics64` page counts (continuous proxy) | No |
 | GPU utilization, in-use GPU memory | IOKit `IOAccelerator` -> `PerformanceStatistics` -> `Device Utilization %` | No |
 | CPU / GPU / ANE / DRAM power (watts) | IOReport "Energy Model" group | Yes (IOReport) |
 | Temperature (die sensors) | IOHIDEventSystemClient thermal sensors (PrimaryUsagePage 0xff00, usage 5) | Yes (IOHID) |
@@ -79,6 +80,13 @@ distributed as a DMG. That also means no App Store sandbox, which is fine and ex
   `--sensors` mode prints the full discovered sensor map so the mapping can be verified per chip.
 - ANE occupancy is not exposed by Apple. Any ANE figure is derived from ANE power and labeled
   accordingly, not a fabricated percentage.
+- The SWAP gauge is a hybrid: its centered number is exact swap-used % (`vm.swapusage`, ground
+  truth — 0 until the machine actually pages to SSD), while its ring fill is a continuous
+  "distance to swap" proxy and its color escalates sky -> amber -> red. The proxy *number* is
+  best-effort, but it is banded by the kernel's exact `kern.memorystatus_vm_pressure_level`
+  (normal/warning/critical — the OS's own swap trigger), so the warning and critical zones are
+  ground truth even though the smooth fill inside a band is an estimate. This lets you watch how
+  close you are to swapping long before any page is written.
 
 ## Self-test and verification modes
 
