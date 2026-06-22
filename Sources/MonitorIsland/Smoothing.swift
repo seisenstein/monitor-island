@@ -21,6 +21,7 @@ final class Smoother: ObservableObject {
     @Published var cpuTempF: Double = 0
     @Published var netDown: Double = 0
     @Published var netUp: Double = 0
+    @Published var swapPressure: Double = 0   // smoothed "distance to swap" proxy (SWAP ring fill)
 
     // Smoothed workload memory: aggregate per label, and per individual instance pid.
     @Published var workloadMem: [String: Double] = [:]
@@ -41,6 +42,7 @@ final class Smoother: ObservableObject {
     private var tCpuTempF: Double = 0
     private var tNetDown: Double = 0
     private var tNetUp: Double = 0
+    private var tSwapPressure: Double = 0
     private var tWorkloadMem: [String: Double] = [:]
     private var tInstanceMem: [Int32: Double] = [:]
     private var tLocalModelMem: Double = 0
@@ -77,6 +79,7 @@ final class Smoother: ObservableObject {
         if let c = s.cpuTempC { tCpuTempF = Smoother.cToF(c) }
         tNetDown = s.netDownBytesPerSec
         tNetUp = s.netUpBytesPerSec
+        tSwapPressure = s.pressurePercent
 
         // Workload memory targets (aggregate per label + per-instance per pid).
         var wm: [String: Double] = [:]
@@ -111,6 +114,7 @@ final class Smoother: ObservableObject {
         cpuTempF = tCpuTempF
         netDown = tNetDown
         netUp = tNetUp
+        swapPressure = tSwapPressure
         workloadMem = tWorkloadMem
         instanceMem = tInstanceMem
         localModelMem = tLocalModelMem
@@ -132,6 +136,7 @@ final class Smoother: ObservableObject {
         cpuTempF += (tCpuTempF - cpuTempF) * k
         netDown += (tNetDown - netDown) * k
         netUp += (tNetUp - netUp) * k
+        swapPressure += (tSwapPressure - swapPressure) * k
         for (key, target) in tWorkloadMem {
             let cur = workloadMem[key] ?? target
             workloadMem[key] = cur + (target - cur) * k
