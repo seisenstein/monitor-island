@@ -205,10 +205,18 @@ struct IslandView: View {
     func metric(_ label: String, _ value: Int, _ suffix: String, _ color: Color) -> some View {
         VStack(spacing: 2) {
             HStack(spacing: 0) {
-                Text("\(value)")
-                    .font(.mono(15, weight: .bold))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
+                // Fixed-width number slot: a hidden "100" reserves the widest possible
+                // value's width in the real font, and the visible number is trailing-
+                // aligned within it. This keeps the pill from changing width as values
+                // cross digit counts (0 -> 70 -> 100). monospacedDigit keeps the digits
+                // from jiggling inside the slot.
+                ZStack(alignment: .trailing) {
+                    Text("100").hidden()
+                    Text("\(value)")
+                        .contentTransition(.numericText())
+                }
+                .font(.mono(15, weight: .bold))
+                .monospacedDigit()
                 Text(suffix).font(.mono(11, weight: .bold))
             }
             .foregroundStyle(Theme.textPrimary)
