@@ -48,6 +48,14 @@ final class Smoother: ObservableObject {
     private var tLocalModelMem: Double = 0
 
     private var timer: DispatchSourceTimer?
+    // The lerp is asymptotic, so at idle the 60Hz frame() never goes quiet on its own and
+    // re-renders the whole island (rings, sparkline, numericText) 60x/sec for the app's
+    // lifetime — stealing frame budget from the expand spring. We SUSPEND the timer once all
+    // channels have converged and RESUME it whenever a new sample moves a target. `running`
+    // tracks the suspend/resume balance so we never over-suspend a DispatchSourceTimer (which
+    // traps). `epsilon` is the convergence threshold for the %/GB-scale channels.
+    private var running = false
+    private let epsilon: Double = 0.01
 
     func start() {
         timer?.cancel()
@@ -58,11 +66,22 @@ final class Smoother: ObservableObject {
         }
         t.resume()
         timer = t
+        running = true
     }
 
     func stop() {
+        // A suspended timer cannot be cancelled cleanly; resume it first to balance.
+        if let t = timer, !running { t.resume() }
         timer?.cancel()
         timer = nil
+        running = false
+    }
+
+    // Resume ticking if currently quiesced (called when new targets arrive).
+    private func resumeIfNeeded() {
+        guard let t = timer, !running else { return }
+        running = true
+        t.resume()
     }
 
     // Convert temp C -> F here.
@@ -101,6 +120,9 @@ final class Smoother: ObservableObject {
         if gpuHistory.count > historyCap {
             gpuHistory.removeFirst(gpuHistory.count - historyCap)
         }
+
+        // New sample may have moved a target away from its displayed value; wake the glide.
+        resumeIfNeeded()
     }
 
     // Snap all displayed values straight to targets (used to settle a render).
@@ -124,27 +146,46 @@ final class Smoother: ObservableObject {
     func step() { frame() }
 
     private func frame() {
-        cpuTotal += (tCpuTotal - cpuTotal) * k
+        // Track the largest remaining gap; when everything is within epsilon we snap to the
+        // targets and suspend the timer so an idle island stops re-rendering at 60Hz. Net
+        // channels (bytes/sec) get a coarser threshold since their magnitudes dwarf epsilon.
+        var maxDelta = 0.0
+        func gap(_ d: Double) { let a = abs(d); if a > maxDelta { maxDelta = a } }
+
+        gap(tCpuTotal - cpuTotal);          cpuTotal += (tCpuTotal - cpuTotal) * k
         for (name, target) in tCore {
             let cur = coreUsage[name] ?? target
+            gap(target - cur)
             coreUsage[name] = cur + (target - cur) * k
         }
-        gpu += (tGpu - gpu) * k
-        memUsedGB += (tMemUsedGB - memUsedGB) * k
-        memUsedPercent += (tMemUsedPercent - memUsedPercent) * k
-        headroomGB += (tHeadroomGB - headroomGB) * k
-        cpuTempF += (tCpuTempF - cpuTempF) * k
-        netDown += (tNetDown - netDown) * k
-        netUp += (tNetUp - netUp) * k
-        swapPressure += (tSwapPressure - swapPressure) * k
+        gap(tGpu - gpu);                    gpu += (tGpu - gpu) * k
+        gap(tMemUsedGB - memUsedGB);        memUsedGB += (tMemUsedGB - memUsedGB) * k
+        gap(tMemUsedPercent - memUsedPercent); memUsedPercent += (tMemUsedPercent - memUsedPercent) * k
+        gap(tHeadroomGB - headroomGB);      headroomGB += (tHeadroomGB - headroomGB) * k
+        gap(tCpuTempF - cpuTempF);          cpuTempF += (tCpuTempF - cpuTempF) * k
+        // Net rates: scale the gap down to the %/GB epsilon basis (1 unit per ~1KB/s).
+        gap((tNetDown - netDown) / 1000.0); netDown += (tNetDown - netDown) * k
+        gap((tNetUp - netUp) / 1000.0);     netUp += (tNetUp - netUp) * k
+        gap(tSwapPressure - swapPressure);  swapPressure += (tSwapPressure - swapPressure) * k
         for (key, target) in tWorkloadMem {
             let cur = workloadMem[key] ?? target
+            gap((target - cur) / 1000.0)
             workloadMem[key] = cur + (target - cur) * k
         }
         for (pid, target) in tInstanceMem {
             let cur = instanceMem[pid] ?? target
+            gap((target - cur) / 1000.0)
             instanceMem[pid] = cur + (target - cur) * k
         }
+        gap((tLocalModelMem - localModelMem) / 1000.0)
         localModelMem += (tLocalModelMem - localModelMem) * k
+
+        // Converged: pin everything to target (kill the asymptotic tail) and quiesce until
+        // the next sample wakes us via resumeIfNeeded(). Skip during step() (no live timer).
+        if maxDelta < epsilon, running, let t = timer {
+            snapToTargets()
+            running = false
+            t.suspend()
+        }
     }
 }

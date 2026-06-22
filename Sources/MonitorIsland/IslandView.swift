@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit   // NSEvent.doubleClickInterval for the tap-disambiguation window
 
 // Ring gauge: trimmed circle with a centered mono number and a brand caption.
 // `fill` decouples the arc from the centered number: when nil the arc tracks
