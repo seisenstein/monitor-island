@@ -52,6 +52,7 @@ struct RingGauge: View {
 // stroke and a soft area fill.
 struct Sparkline: View {
     var data: [Double]
+    var accent: Color = Theme.sky
 
     // Smooth curve through the points (Catmull-Rom -> cubic bezier, tension 1/6).
     private func curve(_ pts: [CGPoint], closedTo bottom: CGFloat?) -> Path {
@@ -95,11 +96,11 @@ struct Sparkline: View {
                 if count > 1 {
                     curve(pts, closedTo: h)
                         .fill(LinearGradient(
-                            colors: [Theme.sky.opacity(0.30), Theme.sky.opacity(0.02)],
+                            colors: [accent.opacity(0.30), accent.opacity(0.02)],
                             startPoint: .top, endPoint: .bottom))
                     curve(pts, closedTo: nil)
                         .stroke(
-                            LinearGradient(colors: [Theme.sky.opacity(0.85), Theme.sky],
+                            LinearGradient(colors: [accent.opacity(0.85), accent],
                                            startPoint: .leading, endPoint: .trailing),
                             style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 }
@@ -128,7 +129,26 @@ struct WorkloadDot: View {
 struct IslandView: View {
     @ObservedObject var model: IslandModel
     @ObservedObject var s: Smoother
+    @ObservedObject private var settings = AppSettings.shared
     @State private var expandedWorkloads: Set<String> = []
+    @State private var showSettings = false
+    @State private var islandSize: CGSize = .zero   // rendered island size for quadrant math
+    @State private var tapGeneration = 0            // bumped on every tap; invalidates a pending deferred expand
+    @State private var lastTapAt: Date = .distantPast
+
+    // Disambiguation window for single-tap-expand vs double-tap-corner. SPEED vs RELIABILITY:
+    // because the single-tap expand resizes+repositions the window (moving content out from
+    // under a second tap), it MUST be deferred until the double-tap window passes — so this
+    // deferral is also the dead time before an expand fires. A fixed 0.20s felt snappy but was
+    // shorter than many users' actual double-click cadence: a slower double-tap let the deferred
+    // expand fire first, so the second tap became a fresh first tap and NO snap ever happened —
+    // for corners AND the new center snaps alike. Bind it to the user's real system double-click
+    // interval (NSEvent.doubleClickInterval, what the OS itself uses) so every genuine double-tap
+    // is caught; the cost is a slightly longer expand delay for users with a slow setting.
+    private let tapDeferral: TimeInterval = NSEvent.doubleClickInterval
+    // The pill<->card grow/shrink spring. Tighter `response` finishes the resize faster so
+    // there is less time for any reactive system to fight it; high damping avoids overshoot.
+    private let expandSpring: Animation = .spring(response: 0.28, dampingFraction: 0.82)
 
     init(model: IslandModel, preExpand: Set<String> = []) {
         self.model = model
@@ -137,6 +157,16 @@ struct IslandView: View {
     }
 
     var snap: Snapshot { model.snap }
+
+    // The single user-customizable accent (default: promptable teal). Everything that
+    // was the blue accent now reads from here, so the color picker recolors it all.
+    private var accent: Color { settings.accent }
+
+    // SWAP gauge color: the dynamic accent at normal pressure, escalating to the fixed
+    // amber/red warning colors as the kernel pressure level climbs.
+    private func swapColor(_ level: Int) -> Color {
+        level == 4 ? Theme.pressureCritical : (level == 2 ? Theme.pressureWarn : accent)
+    }
 
     var hasModel: Bool { snap.localModelName != nil }
     var hasClaude: Bool { snap.workloads.contains { $0.label.contains("Claude") } }
@@ -190,14 +220,14 @@ struct IslandView: View {
     // Compact pill. A dropdown caret signals it expands; tap anywhere to expand.
     var compact: some View {
         HStack(spacing: 11) {
-            metric("GPU", Int(s.gpu.rounded()), "%", Theme.teal)
-            metric("MEM", Int(s.memUsedPercent.rounded()), "%", Theme.energy)
-            metric("CPU", Int(s.cpuTotal.rounded()), "%", Theme.success)
+            metric("GPU", Int(s.gpu.rounded()), "%", accent)
+            metric("MEM", Int(s.memUsedPercent.rounded()), "%", accent)
+            metric("CPU", Int(s.cpuTotal.rounded()), "%", accent)
             // 4th metric: SWAP. Number is exact swap-used % (ground truth, 0 until the
-            // machine actually pages to SSD); the label color escalates sky->amber->red
+            // machine actually pages to SSD); the label color escalates accent->amber->red
             // with the kernel pressure level, so the pill warns you well before that.
             metric("SWAP", Int(snap.swapUsedPercent.rounded()), "%",
-                   Theme.pressureColor(level: snap.pressureLevel))
+                   swapColor(snap.pressureLevel))
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Theme.textFaint)
@@ -233,31 +263,46 @@ struct IslandView: View {
         }
     }
 
-    // Expanded card.
+    // Expanded card. A gear in the corner swaps the content for the settings panel
+    // (the accent color picker); the panel's own close control returns here.
     var expanded: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack(spacing: 16) {
-                RingGauge(value: s.gpu, accent: Theme.teal, caption: "GPU")
-                RingGauge(value: s.cpuTotal, accent: Theme.success, caption: "CPU")
-                RingGauge(value: s.memUsedPercent, accent: Theme.energy, caption: "MEM")
+        ZStack(alignment: .topTrailing) {
+            if showSettings {
+                SettingsPanel(settings: settings,
+                              onClose: { withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { showSettings = false } })
+                    .padding(18)
+                    .frame(width: 292)
+            } else {
+                expandedContent
+                    .overlay(alignment: .topTrailing) {
+                        Button {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { showSettings = true }
+                        } label: {
+                            Image(systemName: "gearshape.fill")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.textFaint)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(10)
+                    }
             }
-            .frame(maxWidth: .infinity)
+        }
+    }
 
-            // Second ring row: SWAP + the core-type split (Super / Performance) as
-            // rings, mirroring the GPU/CPU/MEM row above. SWAP's arc is the pressure
-            // proxy (how close to swapping), its number is exact swap-used %, and its
-            // color escalates with the kernel pressure level. On a 2-core-type chip
-            // (e.g. M5 Pro: Super + Performance) this is exactly three rings.
-            HStack(spacing: 16) {
+    // The normal expanded body: a single row of four rings (GPU / CPU / MEM / SWAP),
+    // then the detail rows, sparkline and workloads. SWAP's arc is the pressure proxy
+    // (how close to swapping) while its number is exact swap-used %.
+    var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(spacing: 12) {
+                RingGauge(value: s.gpu, accent: accent, caption: "GPU", size: 54)
+                RingGauge(value: s.cpuTotal, accent: accent, caption: "CPU", size: 54)
+                RingGauge(value: s.memUsedPercent, accent: accent, caption: "MEM", size: 54)
                 RingGauge(value: snap.swapUsedPercent,
-                          accent: Theme.pressureColor(level: snap.pressureLevel),
+                          accent: swapColor(snap.pressureLevel),
                           caption: "SWAP",
-                          fill: s.swapPressure)
-                ForEach(snap.coreTypes, id: \.name) { ct in
-                    RingGauge(value: s.coreUsage[ct.name] ?? ct.usagePercent,
-                              accent: Theme.accent,
-                              caption: ct.name.uppercased())
-                }
+                          fill: s.swapPressure,
+                          size: 54)
             }
             .frame(maxWidth: .infinity)
 
@@ -282,7 +327,7 @@ struct IslandView: View {
                         .font(.brand(8, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(Theme.textFaint)
-                    Sparkline(data: s.gpuHistory)
+                    Sparkline(data: s.gpuHistory, accent: accent)
                 }
             }
 
@@ -291,7 +336,7 @@ struct IslandView: View {
                 if let name = snap.localModelName {
                     workloadRow("Local model",
                                 name + (snap.localModelMemoryMB != nil ? "  " + fmtMem(s.localModelMem) : ""),
-                                Theme.success)
+                                accent)
                 }
                 ForEach(snap.workloads, id: \.label) { w in
                     workloadGroup(w)
@@ -313,22 +358,22 @@ struct IslandView: View {
                 .font(.mono(11, weight: .medium))
                 .monospacedDigit()
                 .contentTransition(.numericText())
-                .foregroundStyle(warn ? Theme.danger : Theme.textPrimary)
+                .foregroundStyle(warn ? accent : Theme.textPrimary)
             Spacer(minLength: 0)
             if let trailing = trailing {
                 Text(trailing)
                     .font(.mono(11, weight: .medium))
                     .monospacedDigit()
                     .contentTransition(.numericText())
-                    .foregroundStyle(warn ? Theme.danger : Theme.textSecondary)
+                    .foregroundStyle(warn ? accent : Theme.textSecondary)
             }
         }
     }
 
     func workloadColor(_ label: String) -> Color {
-        if label.contains("Claude") { return Theme.energy }
-        if label.contains("Codex") { return Theme.teal }
-        if label.contains("llama") || label.contains("model") || label.contains("LM Studio") { return Theme.success }
+        if label.contains("Claude") { return accent }
+        if label.contains("Codex") { return accent }
+        if label.contains("llama") || label.contains("model") || label.contains("LM Studio") { return accent }
         return Theme.textSecondary
     }
 
