@@ -10,10 +10,14 @@ struct RingGauge: View {
     var accent: Color
     var caption: String
     var fill: Double? = nil   // 0..100 arc; defaults to `value`
+    var size: CGFloat = 62    // diameter; stroke + fonts scale with it so 4 rings can share a row
 
     var body: some View {
+        let lw = size * 0.097                 // ~6 at 62
+        let numFont = min(16, size * 0.28)    // big number stays readable as the ring shrinks
+        let capFont = min(9, size * 0.155)
         ZStack {
-            Circle().stroke(Theme.track, lineWidth: 6)
+            Circle().stroke(Theme.track, lineWidth: lw)
             Circle()
                 .trim(from: 0, to: CGFloat(min(max(fill ?? value, 0), 100) / 100.0))
                 .stroke(
@@ -22,25 +26,25 @@ struct RingGauge: View {
                         center: .center,
                         startAngle: .degrees(-90),
                         endAngle: .degrees(270)),
-                    style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                    style: StrokeStyle(lineWidth: lw, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text("\(Int(value.rounded()))")
-                        .font(.mono(16, weight: .bold))
+                    Text(String(format: "%02d", Int(value.rounded())))
+                        .font(.mono(numFont, weight: .bold))
                         .monospacedDigit()
                         .contentTransition(.numericText())
                     Text("%")
-                        .font(.mono(10, weight: .semibold))
+                        .font(.mono(numFont * 0.625, weight: .semibold))
                 }
                 .foregroundStyle(Theme.textPrimary)
                 Text(caption)
-                    .font(.brand(9, weight: .semibold))
+                    .font(.brand(capFont, weight: .semibold))
                     .tracking(0.6)
                     .foregroundStyle(accent)
             }
         }
-        .frame(width: 62, height: 62)
+        .frame(width: size, height: size)
     }
 }
 
@@ -179,7 +183,7 @@ struct IslandView: View {
             shape
                 .fill(.ultraThinMaterial)
                 .environment(\.colorScheme, .dark)
-                .overlay(shape.fill(Theme.glassTint.opacity(Theme.glassTintOpacity + 0.1)))
+                .overlay(shape.fill(Theme.glassTint.opacity(min(Theme.glassTintOpacity + 0.04, 1.0))))
         }
     }
 
@@ -212,7 +216,9 @@ struct IslandView: View {
                 // from jiggling inside the slot.
                 ZStack(alignment: .trailing) {
                     Text("100").hidden()
-                    Text("\(value)")
+                    // Zero-padded to two digits (00, 01, ... 99, 100) so every metric
+                    // reads as a stable two-digit percentage.
+                    Text(String(format: "%02d", value))
                         .contentTransition(.numericText())
                 }
                 .font(.mono(15, weight: .bold))
