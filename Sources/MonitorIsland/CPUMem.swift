@@ -115,6 +115,9 @@ final class CPUMemSampler {
         var headroomGB: Double
         var swapUsedGB: Double
         var swapTotalGB: Double
+        var swapUsedPercent: Double   // exact: swap used as % of unified memory (ground truth)
+        var pressurePercent: Double    // 0..100 "distance to swap" proxy (gauge fill)
+        var pressureLevel: Int         // kernel: 1 normal, 2 warning, 4 critical (exact)
         var pressure: Bool
     }
 
@@ -157,15 +160,45 @@ final class CPUMemSampler {
         let usedGB = Double(usedBytes) / gb
         let usedPct = total > 0 ? Double(usedBytes) / Double(total) * 100.0 : 0
         let headroom = totalGB - usedGB
+        let swapUsedPct = total > 0 ? Double(swapUsed) / Double(total) * 100.0 : 0
+
+        // Kernel memory-pressure level — the OS's OWN swap trigger, so this is the
+        // exact ground truth for "how close to swapping": 1 normal, 2 warning, 4
+        // critical. The sysctl is a 4-byte int; read it as Int32 (sysctlUInt64 assumes
+        // 8 bytes, so it is not reused here). Default to 1 (normal) if unavailable.
+        var lvl: Int32 = 1
+        var lvlSize = MemoryLayout<Int32>.size
+        if sysctlbyname("kern.memorystatus_vm_pressure_level", &lvl, &lvlSize, nil, 0) != 0 { lvl = 1 }
+        let pressureLevel = Int(lvl)
+
+        // Continuous "distance to swap" proxy (0..100) for the gauge fill. The number
+        // itself is best-effort, but it is BANDED by the exact kernel level so the ring
+        // is unmistakably in the warning/critical zone exactly when the OS says so:
+        //   normal  -> 0..60  (calm), driven by memory fullness above ~60%
+        //   warning -> 65..90
+        //   critical-> 90..100
+        // usedFrac already includes the compressor, so compression (the pre-swap stage)
+        // pushes the proxy up before any page actually spills to SSD.
+        let usedFrac = total > 0 ? Double(usedBytes) / Double(total) : 0
+        func clamp01(_ x: Double) -> Double { min(max(x, 0), 1) }
+        let pressurePct: Double
+        switch pressureLevel {
+        case 4:  pressurePct = 90 + 10 * clamp01((usedFrac - 0.90) / 0.10)
+        case 2:  pressurePct = 65 + 25 * clamp01((usedFrac - 0.75) / 0.20)
+        default: pressurePct = 60 * clamp01((usedFrac - 0.60) / 0.35)
+        }
 
         let swapGrowing = swapUsed > prevSwapUsed
         prevSwapUsed = swapUsed
-        let pressure = swapGrowing || usedPct > 90.0
+        let pressure = swapGrowing || pressureLevel > 1 || usedPct > 90.0
 
         return MemReading(totalGB: round2(totalGB), usedGB: round2(usedGB),
                           usedPercent: round1(usedPct), headroomGB: round2(headroom),
                           swapUsedGB: round2(Double(swapUsed) / gb),
                           swapTotalGB: round2(Double(swapTotal) / gb),
+                          swapUsedPercent: round1(swapUsedPct),
+                          pressurePercent: round1(pressurePct),
+                          pressureLevel: pressureLevel,
                           pressure: pressure)
     }
 }

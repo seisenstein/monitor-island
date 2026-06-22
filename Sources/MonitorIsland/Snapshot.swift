@@ -44,6 +44,9 @@ struct Snapshot: Codable {
     var headroomGB: Double = 0
     var swapUsedGB: Double = 0
     var swapTotalGB: Double = 0
+    var swapUsedPercent: Double = 0    // exact swap used as % of unified memory (ground truth)
+    var pressurePercent: Double = 0    // 0..100 "distance to swap" proxy (gauge fill, best-effort)
+    var pressureLevel: Int = 1         // kernel: 1 normal, 2 warning, 4 critical (exact)
     var memoryPressure: Bool = false
 
     // GPU

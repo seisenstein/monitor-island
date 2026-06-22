@@ -40,6 +40,9 @@ final class Sampler {
         snap.headroomGB = mem.headroomGB
         snap.swapUsedGB = mem.swapUsedGB
         snap.swapTotalGB = mem.swapTotalGB
+        snap.swapUsedPercent = mem.swapUsedPercent
+        snap.pressurePercent = mem.pressurePercent
+        snap.pressureLevel = mem.pressureLevel
         snap.memoryPressure = mem.pressure
 
         // GPU
