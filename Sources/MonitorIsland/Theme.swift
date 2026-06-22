@@ -12,6 +12,23 @@ enum Theme {
     // Single accent (gauges / sparkline / dots).
     static let accent = sky
 
+    // Deliberate, documented exception to the 3-color palette: the memory-pressure
+    // escalation. These are used ONLY by the SWAP / pressure gauge and only ever
+    // become visible when the kernel reports warning/critical pressure (i.e. when the
+    // machine is genuinely approaching or doing SSD swap) — the one moment a warning
+    // color earns its keep. Normal pressure stays on `accent` (sky).
+    static let pressureWarn     = Color(red: 0xE8/255.0, green: 0xA8/255.0, blue: 0x3E/255.0) // amber
+    static let pressureCritical = Color(red: 0xE5/255.0, green: 0x55/255.0, blue: 0x4E/255.0) // red
+
+    // Map the exact kernel pressure level (1 normal, 2 warning, 4 critical) to a color.
+    static func pressureColor(level: Int) -> Color {
+        switch level {
+        case 4:  return pressureCritical
+        case 2:  return pressureWarn
+        default: return accent
+        }
+    }
+
     // Aliases kept so the views compile; all map into the 3-color palette.
     static let teal    = sky
     static let energy  = sky
