@@ -176,6 +176,19 @@ struct IslandView: View {
         Group {
             if model.expanded { expanded } else { compact }
         }
+        .background(
+            GeometryReader { geo in
+                // Only write when the measured size actually changes: during the expand
+                // spring this otherwise fires a @State write (and full body re-eval) on
+                // every intermediate frame. snapRequest only needs the size at rest.
+                Color.clear
+                    .onAppear { if islandSize != geo.size { islandSize = geo.size } }
+                    .onChange(of: geo.size) { _, newValue in
+                        guard newValue != islandSize else { return }
+                        islandSize = newValue
+                    }
+            }
+        )
         .background(glassBackground)
         .overlay(
             RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous)
@@ -192,11 +205,89 @@ struct IslandView: View {
         // which follows this clipped alpha so the shadow is rounded with zero buffer.
         .clipShape(RoundedRectangle(cornerRadius: Theme.cornerRadius, style: .continuous))
         .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                model.expanded.toggle()
+        .gesture(islandTapGesture)
+    }
+
+    // Double-tap a quadrant -> snap to that screen corner; single tap -> expand toggle.
+    // CRITICAL: acting on the first tap (the naive approach) expands the card, which BOTH
+    // resizes the window (pill->card) AND repositions it (the on-screen clamp) exactly as a
+    // second tap would land — moving the content out from under it so the OS never sees a
+    // coherent double-tap and the snap never fires. So the single-tap expand must still be
+    // DEFERRED until we know no second tap is coming, keeping the view static during
+    // recognition. The previous `.exclusively(before:)` did this but bound the deferral to the
+    // full system double-click interval (~0.5s, user-tunable higher) -> a slow open.
+    //
+    // Instead we own disambiguation with ONE SpatialTapGesture(count:1): on the first tap we
+    // arm a cancellable expand for a fixed short `tapDeferral`; a second tap inside that window
+    // cancels the pending expand and routes the FIRST tap's location to the corner-snap. The
+    // SpatialTapGesture still carries the tap LOCATION so the quadrant math is unchanged, and
+    // the view stays static until the deferral elapses (double-tap benefit retained) — but the
+    // dead time is now a fixed 0.20s instead of the system interval.
+    private var islandTapGesture: some Gesture {
+        SpatialTapGesture(count: 1, coordinateSpace: .local)
+            .onEnded { value in
+                if showSettings { return }
+                let now = Date()
+                // EVERY tap bumps the generation. This is what reliably suppresses a pending
+                // deferred expand: a DispatchWorkItem.cancel() raced (it cancelled only the
+                // latest armed item and could lose to the timer), so a single-tap expand fired
+                // right after a double-tap snap and spuriously expanded/collapsed the island.
+                tapGeneration &+= 1
+                // Second tap inside the window: a double-tap -> snap (NOT expand).
+                if now.timeIntervalSince(lastTapAt) < tapDeferral {
+                    lastTapAt = .distantPast
+                    let req = snapRequest(at: value.location)
+                    if let req = req {
+                        model.onCornerSnap?(req)
+                    } else {
+                        toggleExpanded()   // (snapRequest never returns nil today; kept for safety)
+                    }
+                    return
+                }
+                // First tap: defer the expand. It fires ONLY if no later tap bumped the
+                // generation in the meantime (i.e. it was a genuine single tap).
+                lastTapAt = now
+                let gen = tapGeneration
+                DispatchQueue.main.asyncAfter(deadline: .now() + tapDeferral) {
+                    MainActor.assumeIsolated {
+                        guard gen == tapGeneration else {
+                            return
+                        }
+                        lastTapAt = .distantPast
+                        toggleExpanded()
+                    }
+                }
             }
+    }
+
+    // Run a pill<->card toggle as one cohesive motion: bracket it with the model's
+    // transition hooks so AppDelegate suppresses its per-frame reactive reposition for the
+    // duration of the spring and clamps the final size on-screen exactly once on settle.
+    private func toggleExpanded() {
+        model.onTransitionBegin?()
+        withAnimation(expandSpring) { model.expanded.toggle() }
+        // Hold the transition (anchor-pin without per-frame clamp) until the spring has fully
+        // settled, THEN clamp once. A response:0.28 / damping:0.82 spring keeps emitting size
+        // frames past 0.30s, so ending the transition at 0.30s re-enabled the per-frame clamp
+        // for the animation tail -> residual end-of-open jitter. 0.5s comfortably covers settle.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            MainActor.assumeIsolated { model.onTransitionEnd?() }
         }
+    }
+
+    // Classify a tap point (island-local, top-left origin, y-DOWN) into a SnapRequest.
+    // The island is divided into a 3-column × 2-row grid: the outer thirds route to the
+    // four screen corners; the middle third routes to the centered sticky snaps (top-middle
+    // -> under the camera/notch, bottom-middle -> centered at screen bottom). Returns nil
+    // only before the size is measured; AppDelegate flips y to screen (bottom-left) coords.
+    private func snapRequest(at p: CGPoint) -> SnapRequest? {
+        let w = islandSize.width, h = islandSize.height
+        guard w > 1, h > 1 else { return nil }            // size not measured yet -> ignore
+        let fx = p.x / w, fy = p.y / h
+        let top = fy < 0.5
+        if fx < 1.0/3.0 { return .corner(top ? .topLeft  : .bottomLeft)  }
+        if fx > 2.0/3.0 { return .corner(top ? .topRight : .bottomRight) }
+        return top ? .topCenter : .bottomCenter            // middle column -> centered sticky snap
     }
 
     // Real Liquid Glass on macOS 26 (almost clear), with a very light cool tint so it
