@@ -1,16 +1,21 @@
 import SwiftUI
 
 // Ring gauge: trimmed circle with a centered mono number and a brand caption.
+// `fill` decouples the arc from the centered number: when nil the arc tracks
+// `value` (the default for GPU/CPU/MEM). The SWAP ring passes a separate `fill`
+// (the memory-pressure proxy) so the arc shows "how close to swapping" while the
+// number stays exact swap-used %.
 struct RingGauge: View {
-    var value: Double      // 0..100
+    var value: Double      // 0..100 (centered number)
     var accent: Color
     var caption: String
+    var fill: Double? = nil   // 0..100 arc; defaults to `value`
 
     var body: some View {
         ZStack {
             Circle().stroke(Theme.track, lineWidth: 6)
             Circle()
-                .trim(from: 0, to: CGFloat(min(max(value, 0), 100) / 100.0))
+                .trim(from: 0, to: CGFloat(min(max(fill ?? value, 0), 100) / 100.0))
                 .stroke(
                     AngularGradient(
                         gradient: Gradient(colors: [accent.opacity(0.7), accent]),
@@ -184,6 +189,11 @@ struct IslandView: View {
             metric("GPU", Int(s.gpu.rounded()), "%", Theme.teal)
             metric("MEM", Int(s.memUsedPercent.rounded()), "%", Theme.energy)
             metric("CPU", Int(s.cpuTotal.rounded()), "%", Theme.success)
+            // 4th metric: SWAP. Number is exact swap-used % (ground truth, 0 until the
+            // machine actually pages to SSD); the label color escalates sky->amber->red
+            // with the kernel pressure level, so the pill warns you well before that.
+            metric("SWAP", Int(snap.swapUsedPercent.rounded()), "%",
+                   Theme.pressureColor(level: snap.pressureLevel))
             Image(systemName: "chevron.down")
                 .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(Theme.textFaint)
@@ -219,27 +229,23 @@ struct IslandView: View {
             }
             .frame(maxWidth: .infinity)
 
-            // Core-type split (Super / Performance / ...).
-            HStack(spacing: 18) {
+            // Second ring row: SWAP + the core-type split (Super / Performance) as
+            // rings, mirroring the GPU/CPU/MEM row above. SWAP's arc is the pressure
+            // proxy (how close to swapping), its number is exact swap-used %, and its
+            // color escalates with the kernel pressure level. On a 2-core-type chip
+            // (e.g. M5 Pro: Super + Performance) this is exactly three rings.
+            HStack(spacing: 16) {
+                RingGauge(value: snap.swapUsedPercent,
+                          accent: Theme.pressureColor(level: snap.pressureLevel),
+                          caption: "SWAP",
+                          fill: s.swapPressure)
                 ForEach(snap.coreTypes, id: \.name) { ct in
-                    let v = s.coreUsage[ct.name] ?? ct.usagePercent
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(ct.name.uppercased())
-                            .font(.brand(8, weight: .semibold))
-                            .tracking(0.6)
-                            .foregroundStyle(Theme.textSecondary)
-                        HStack(spacing: 0) {
-                            Text("\(Int(v.rounded()))")
-                                .font(.mono(13, weight: .medium))
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                            Text("%").font(.mono(10, weight: .medium))
-                        }
-                        .foregroundStyle(Theme.textPrimary)
-                    }
+                    RingGauge(value: s.coreUsage[ct.name] ?? ct.usagePercent,
+                              accent: Theme.accent,
+                              caption: ct.name.uppercased())
                 }
-                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity)
 
             row("Memory",
                 String(format: "%.2f / %.2f GB", s.memUsedGB, snap.memTotalGB),
