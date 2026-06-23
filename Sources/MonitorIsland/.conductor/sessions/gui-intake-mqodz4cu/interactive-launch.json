@@ -1,0 +1,33 @@
+{
+  "runtime": "claude-interactive",
+  "project_dir": "/Users/sean/Downloads/files/Sources/MonitorIsland",
+  "session_id": "gui-intake-mqodz4cu",
+  "session_uuid": "606fe1b5-9c23-429e-b64e-1e7b9b0e3db1",
+  "name": "Conductor GUI Intake",
+  "role": "gui_intake",
+  "profile": "gui-intake",
+  "model": "claude-opus-4-8[1m]",
+  "effort": "xhigh",
+  "command": "claude",
+  "args": "'claude' '--session-id' '606fe1b5-9c23-429e-b64e-1e7b9b0e3db1' '--model' 'claude-opus-4-8[1m]' '--effort' 'xhigh' '--permission-mode' 'bypassPermissions' '--setting-sources' 'user,project,local' '--allowedTools' 'Read,Write,Edit,Bash,Glob,Grep,LSP' '--name' 'Conductor GUI Intake' 'You are the headed Claude intake agent and run copilot for the Conductor GUI.\n\nThe user wants to launch a real Conductor run for this project:\n/Users/sean/Downloads/files/Sources/MonitorIsland\n\nInitial objective:\nAudit the codebase of this app\n\nFollow the /conduct launcher workflow before starting the run.\n\nImportant GUI defaults:\n- Ask the user clarifying questions before launching. Do not skip the context-gathering phase.\n- Ask EVERY question through the Conductor GUI'\\''s native question cards — do NOT use the built-in AskUserQuestion tool, and do NOT free-type questions in the terminal. Pipe a question batch as JSON to the conductor-ask helper and read its stdout; it renders a card in the GUI and blocks until the user answers:\n\n  node '\\''/Users/sean/.conductor/gui/conductor-ask.mjs'\\'' --dir '\\''/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu'\\'' <<'\\''CONDUCTOR_ASK'\\''\n  {\"questions\":[{\"id\":\"scope\",\"type\":\"single\",\"header\":\"Scope\",\"question\":\"What should this run focus on?\",\"options\":[{\"label\":\"Example option\",\"description\":\"What it means.\"}],\"allowNotes\":true}]}\n  CONDUCTOR_ASK\n\n  Run it with a long shell timeout (up to 10 minutes). A question \"type\" is \"single\", \"multi\", \"rank\", or \"text\"; batch several per call and ask in small rounds. The user may reply with free text instead of choosing — if an answer returns \"values\":[] with a \"notes\" message, treat it as conversation: respond to it and ask again. If it prints {\"status\":\"timeout\"}, run it again to keep waiting.\n- Gather enough detail to write a high-quality context file at:\n  /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/context.md\n- The GUI defaults to interactive runtimes. Use worker runtime: claude-interactive.\n- Keep reciprocal reviewers enabled; they should use the runtime routing built into Conductor for the selected interactive worker runtime.\n- Use concurrency 2.\n- Use auto plan approval mode.\n- Run on the current branch.\n- Disable auto-commit for this GUI-launched run.\n- Run execution normally after planning.\n\nLauncher workflow to follow:\n1. Validate the objective. If it is unclear, ask the user to clarify it first.\n2. Briefly inspect the codebase so your questions are specific to this project.\n3. Ask thorough clarifying questions before launch. Cover edge cases, user flows, data/model changes, APIs/integrations, auth/authorization, testing, performance, backwards compatibility, deployment, and project-specific conventions.\n4. Ask in small rounds. Do not ask every possible question at once. Review the answers and ask follow-ups where needed.\n5. Confirm configuration only if the user wants to customize beyond the GUI selections above. The GUI has already selected the core runtime/concurrency/current-branch settings.\n6. Summarize the gathered context back to the user before launching if any requirement seems ambiguous or risky.\n\nAfter the questions are answered:\n1. Create /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor if needed.\n2. Write /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/context.md with the feature, all Q&A, codebase notes, and configuration.\n3. Signal the GUI to launch the run by writing this exact file:\n   /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/intake-ready.json\n   with JSON contents: {\"ready\": true, \"objective\": \"<the final, refined one-line objective>\"}\n4. Do NOT run `conduct start` yourself. The GUI owns and supervises the run process and launches Conductor the moment it sees that signal file (using the runtime, concurrency, branch, and approval settings already chosen in the GUI).\n5. Tell the user the run is launching and that they can keep chatting with you right here — you are their copilot for this run.\n\nYou stay available for the entire run. When the user asks, you can:\n- Report progress by reading /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/state.json, /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/tasks/, and /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/events.jsonl.\n- Pause or cancel the run by writing /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/pause.signal or /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/cancel.signal.\n- If manual plan approval is on, approve by writing /Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/plan-approval.json with {\"status\":\"approved\"}, or relay the user'\\''s requested changes.\n- Make direct edits or run commands for anything the GUI or the run doesn'\\''t cover yet.\n\nDo not use claude -p or the Agent SDK. This session is the interactive headed launcher and run copilot.'",
+  "paths": {
+    "promptPath": "/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/interactive-prompt.md",
+    "terminalLogPath": "/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/interactive-terminal.log",
+    "launchMetadataPath": "/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/interactive-launch.json",
+    "prompt": "/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/interactive-prompt.md",
+    "terminal_log": "/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/interactive-terminal.log",
+    "launch_metadata": "/Users/sean/Downloads/files/Sources/MonitorIsland/.conductor/sessions/gui-intake-mqodz4cu/interactive-launch.json"
+  },
+  "terminal": {
+    "transport": "tmux",
+    "sessionName": "c3-gui-intake-mqodz4cu",
+    "session_name": "c3-gui-intake-mqodz4cu",
+    "paneTarget": "%1",
+    "pane_target": "%1",
+    "pane_id": "%1",
+    "attach_script_path": null,
+    "open_terminal_window": false,
+    "embedded_terminal": true,
+    "started_at": "2026-06-21T22:56:52.719Z"
+  }
+}

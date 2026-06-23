@@ -1,0 +1,85 @@
+{
+  "id": "mqoek5so-3rgu",
+  "createdAt": "2026-06-21T23:13:14.328Z",
+  "questions": [
+    {
+      "id": "stack",
+      "type": "single",
+      "header": "Stack",
+      "question": "What frontend stack should this persona specialize in?",
+      "options": [
+        {
+          "label": "Web — React/TypeScript",
+          "description": "Component-based web UI: React, TypeScript, modern CSS, accessibility."
+        },
+        {
+          "label": "Web — Vue/Svelte/other",
+          "description": "A different web framework. Tell me which in notes."
+        },
+        {
+          "label": "SwiftUI / AppKit (macOS)",
+          "description": "Native Apple UI — fits this MonitorIsland repo (Swift macOS app)."
+        },
+        {
+          "label": "Framework-agnostic web",
+          "description": "General HTML/CSS/JS UI work without committing to one framework."
+        }
+      ],
+      "allowNotes": true
+    },
+    {
+      "id": "scope",
+      "type": "multi",
+      "header": "Scope",
+      "question": "What should this persona OWN (pick all that apply)?",
+      "options": [
+        {
+          "label": "UI components & layout",
+          "description": "Building/refactoring views, components, styling."
+        },
+        {
+          "label": "State management & data flow",
+          "description": "Client state, stores, wiring data into the UI."
+        },
+        {
+          "label": "API integration (client side)",
+          "description": "Calling backend APIs, handling loading/error states."
+        },
+        {
+          "label": "Accessibility & responsive design",
+          "description": "a11y, keyboard nav, responsive/adaptive layouts."
+        },
+        {
+          "label": "Frontend testing",
+          "description": "Component/unit/e2e tests for the UI."
+        },
+        {
+          "label": "Build tooling & performance",
+          "description": "Bundler config, perf, lazy-loading."
+        }
+      ],
+      "allowNotes": true
+    },
+    {
+      "id": "models",
+      "type": "single",
+      "header": "Models",
+      "question": "Model tier for the execution worker (Claude + Codex runtimes)?",
+      "options": [
+        {
+          "label": "Capable + high effort (recommended)",
+          "description": "Opus 4.8 / GPT-5.5 at high effort — best for real UI engineering."
+        },
+        {
+          "label": "Balanced",
+          "description": "Sonnet 4.6 / GPT-5.4-mini, medium effort — cheaper/faster."
+        },
+        {
+          "label": "Let me decide later",
+          "description": "Inherit runtime defaults."
+        }
+      ],
+      "allowNotes": true
+    }
+  ]
+}

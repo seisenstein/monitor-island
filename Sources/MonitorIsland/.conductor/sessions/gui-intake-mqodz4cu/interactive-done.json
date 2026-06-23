@@ -1,0 +1,6 @@
+{
+  "status": "stopped",
+  "completed_at": "2026-06-21T22:57:30.369Z",
+  "summary": "GUI intake stopped before launching Conductor.",
+  "error": null
+}
