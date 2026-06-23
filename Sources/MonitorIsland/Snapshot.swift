@@ -18,6 +18,7 @@ struct WorkloadInstance: Codable {
     var pid: Int32
     var memoryMB: Double
     var label: String          // working-dir basename if known, else "pid N"
+    var diskWrittenSessionMB: Double = 0
 }
 
 struct WorkloadEntry: Codable {
@@ -27,6 +28,7 @@ struct WorkloadEntry: Codable {
     var memoryMB: Double        // aggregate resident
     var detail: String?         // e.g. model name, kind
     var instances: [WorkloadInstance] = []  // per-process breakdown for drill-down
+    var diskWrittenSessionMB: Double = 0    // host bytes written by this workload this session (ri_diskio_byteswritten; a lower bound)
 }
 
 // The single observable snapshot the UI reads and --dump serializes.
@@ -70,6 +72,16 @@ struct Snapshot: Codable {
     // Network (bytes/sec)
     var netDownBytesPerSec: Double = 0
     var netUpBytesPerSec: Double = 0
+
+    // Disk (host writes to the block layer — NOT NAND writes; see Disk.swift)
+    var diskWriteBytesPerSec: Double = 0
+    var diskReadBytesPerSec: Double = 0
+    var diskSessionWrittenGB: Double = 0     // host bytes written this app session
+    var diskLifetimeWrittenGB: Double = 0    // cumulative since Monitor Island first ran (survives reboot); a verifiable lower bound
+    var diskWearPercent: Double = 0          // DERIVED best-effort estimate (see diskWearNote)
+    var diskWearBestEffort: Bool = true      // ALWAYS true in v1 — there is no verified NVMe SMART odometer
+    var diskTBWAssumed: Double = 1000        // the assumed rated TBW used for the estimate
+    var diskWearNote: String? = nil          // states the TBW assumption + write-amplification caveat
 
     // Workloads
     var workloads: [WorkloadEntry] = []

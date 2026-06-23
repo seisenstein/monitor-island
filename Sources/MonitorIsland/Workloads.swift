@@ -81,6 +81,20 @@ final class WorkloadSampler {
         return Double(info.ri_resident_size) / (1024.0 * 1024.0)
     }
 
+    // Per-process cumulative disk bytes written + process start time, from the SAME
+    // rusage_info_v4 used for memory (sudoless for same-user processes, zero extra syscall).
+    // ri_diskio_byteswritten is block-layer host bytes (the correct wear field), NOT ri_logical_writes.
+    private func diskWritten(for pid: Int32) -> (written: UInt64, startAbs: UInt64) {
+        var info = rusage_info_v4()
+        let r = withUnsafeMutablePointer(to: &info) { p -> Int32 in
+            p.withMemoryRebound(to: rusage_info_t?.self, capacity: 1) { rp in
+                proc_pid_rusage(pid, RUSAGE_INFO_V4, rp)
+            }
+        }
+        guard r == 0 else { return (0, 0) }
+        return (info.ri_diskio_byteswritten, info.ri_proc_start_abstime)
+    }
+
     // Current working directory of a pid (sudoless, own processes), used to label
     // an individual session (e.g. a Claude Code session by its project folder).
     private func cwd(for pid: Int32) -> String? {
@@ -116,6 +130,11 @@ final class WorkloadSampler {
         return out
     }
 
+    // Per-process disk-write attribution state (held across ticks).
+    private var diskBaseline: [Int32: (written: UInt64, startAbs: UInt64)] = [:]  // last seen per pid
+    private var sessionWritten: [String: UInt64] = [:]   // cumulative delta per workload label
+    private var instWritten: [Int32: UInt64] = [:]       // cumulative delta per pid (for drill-down)
+
     func sample() -> Result {
         let procs = scanProcs()
         var groups: [String: (count: Int, mem: Double, detail: String?, instances: [WorkloadInstance])] = [:]
@@ -139,12 +158,27 @@ final class WorkloadSampler {
             let hay = (p.path + " " + p.args).lowercased()
             let isAppBundle = p.path.contains(".app/Contents")
 
-            // Claude Code CLI: the executable is .../claude-code/bin/claude.exe, comm
-            // "claude". Match the claude-code package path, the claude/claude.exe binary
-            // name, or a node process running the claude-code CLI. Exclude desktop app.
-            if !isAppBundle && (hay.contains("claude-code") || hay.contains("anthropic-ai/claude") ||
-               nameL == "claude" || nameL.hasPrefix("claude.") ||
-               (nameL == "node" && hay.contains("/claude"))) {
+            // Claude Code CLI. The distinctive package substrings ("claude-code",
+            // "anthropic-ai/claude") identify the CLI even when it ships INSIDE a .app bundle
+            // — current Claude Code is .../claude-code/<ver>/claude.app/Contents/MacOS/claude,
+            // so gating those behind !isAppBundle (as the desktop-app exclusion does) would
+            // wrongly hide the CLI. Match those substrings regardless of bundling; keep the
+            // looser basename/node heuristics gated by !isAppBundle so the Claude *desktop*
+            // app (/Applications/Claude.app, no "claude-code" in its path) is still excluded.
+            let isClaudeCodeCLI =
+                hay.contains("claude-code") || hay.contains("anthropic-ai/claude") ||
+                (!isAppBundle && (nameL == "claude" || nameL.hasPrefix("claude.") ||
+                                  (nameL == "node" && hay.contains("/claude"))))
+            if isClaudeCodeCLI {
+                let cur = diskWritten(for: p.pid)
+                if let base = diskBaseline[p.pid], base.startAbs == cur.startAbs {
+                    // Same process (start time unchanged): count only the forward delta. A changed
+                    // startAbs means the pid was reused by a different process → reset, don't count.
+                    let delta = cur.written >= base.written ? cur.written - base.written : 0
+                    sessionWritten["Claude Code", default: 0] += delta
+                    instWritten[p.pid] = (instWritten[p.pid] ?? 0) + delta
+                }
+                diskBaseline[p.pid] = cur
                 add("Claude Code", pid: p.pid, mem: p.residentMB)
                 continue
             }
@@ -152,6 +186,15 @@ final class WorkloadSampler {
             // "codex" binary; counting both would double the instance count, so we
             // match only the native binary basename (one per logical instance).
             if !isAppBundle && (nameL == "codex" || nameL.hasPrefix("codex.")) {
+                let cur = diskWritten(for: p.pid)
+                if let base = diskBaseline[p.pid], base.startAbs == cur.startAbs {
+                    // Same process (start time unchanged): count only the forward delta. A changed
+                    // startAbs means the pid was reused by a different process → reset, don't count.
+                    let delta = cur.written >= base.written ? cur.written - base.written : 0
+                    sessionWritten["Codex", default: 0] += delta
+                    instWritten[p.pid] = (instWritten[p.pid] ?? 0) + delta
+                }
+                diskBaseline[p.pid] = cur
                 add("Codex", pid: p.pid, mem: p.residentMB)
                 continue
             }
@@ -203,12 +246,69 @@ final class WorkloadSampler {
             localModelName = lm
         }
 
+        // Prune stale pid entries to prevent unbounded map growth; sessionWritten (by label)
+        // is intentionally kept — the cumulative per-label total must survive pid churn.
+        let livePids = Set(procs.map { $0.pid })
+        diskBaseline = diskBaseline.filter { livePids.contains($0.key) }
+        instWritten  = instWritten.filter  { livePids.contains($0.key) }
+
         var entries: [WorkloadEntry] = []
         for (label, g) in groups.sorted(by: { $0.key < $1.key }) {
-            let insts = g.instances.sorted { $0.memoryMB > $1.memoryMB }
-            entries.append(WorkloadEntry(label: label, count: g.count, cpuPercent: 0,
-                                         memoryMB: round2(g.mem), detail: g.detail, instances: insts))
+            let insts = g.instances.sorted { $0.memoryMB > $1.memoryMB }.map { inst -> WorkloadInstance in
+                var i = inst
+                i.diskWrittenSessionMB = round2(Double(instWritten[inst.pid] ?? 0) / (1024 * 1024))
+                return i
+            }
+            var entry = WorkloadEntry(label: label, count: g.count, cpuPercent: 0,
+                                      memoryMB: round2(g.mem), detail: g.detail, instances: insts)
+            entry.diskWrittenSessionMB = round2(Double(sessionWritten[label] ?? 0) / (1024 * 1024))
+            entries.append(entry)
         }
         return Result(entries: entries, localModelName: localModelName, localModelMemoryMB: localModelMem.map(round1))
+    }
+
+    // Cumulative session bytes written attributed to a workload label (e.g. "Claude Code", "Codex").
+    func sessionWrittenBytes(forLabel label: String) -> UInt64 { sessionWritten[label] ?? 0 }
+}
+
+// Opens "the thing" a workload instance represents, for the click-to-open affordance in the
+// expanded island. Best-effort and sudoless: prefer the process's working directory (e.g. a
+// Claude Code session's project folder), then fall back to activating the app, then to
+// revealing the executable in Finder.
+enum WorkloadOpener {
+    static func open(pid: Int32) {
+        // 1. Working directory (most useful for CLI tools like Claude Code / Codex sessions):
+        //    open the folder in Finder.
+        if let dir = workingDirectory(for: pid),
+           FileManager.default.fileExists(atPath: dir) {
+            NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
+            return
+        }
+        // 2. A GUI app with this pid → bring it to the front.
+        if let app = NSRunningApplication(processIdentifier: pid) {
+            app.activate(options: [.activateAllWindows])
+            return
+        }
+        // 3. Last resort: reveal the executable in Finder.
+        if let p = executablePath(for: pid), !p.isEmpty {
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        }
+    }
+
+    private static func workingDirectory(for pid: Int32) -> String? {
+        var vpi = proc_vnodepathinfo()
+        let sz = Int32(MemoryLayout<proc_vnodepathinfo>.stride)
+        let r = proc_pidinfo(pid, 9 /* PROC_PIDVNODEPATHINFO */, 0, &vpi, sz)
+        guard r > 0 else { return nil }
+        let path = withUnsafeBytes(of: &vpi.pvi_cdir.vip_path) { raw -> String in
+            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
+        }
+        return path.isEmpty ? nil : path
+    }
+
+    private static func executablePath(for pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: 4096)
+        let r = proc_pidpath(pid, &buf, UInt32(buf.count))
+        return r > 0 ? String(cString: buf) : nil
     }
 }

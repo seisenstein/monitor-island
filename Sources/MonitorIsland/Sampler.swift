@@ -9,6 +9,9 @@ final class Sampler {
     private let power = PowerSampler()
     private let net = NetworkSampler()
     private let workloads = WorkloadSampler()
+    private let disk = DiskSampler()
+    private let damageLog = DamageLogger()
+    private lazy var diskCapacityBytes: UInt64 = SSDWear.capacityBytes()   // read once, cached
 
     init() {
         cpuMem = CPUMemSampler(sys: sys)
@@ -18,6 +21,7 @@ final class Sampler {
     func prime() {
         _ = cpuMem.samplePerCore()
         _ = net.sample()
+        _ = disk.sample()
     }
 
     func tick(detectWorkloads: Bool = true) -> Snapshot {
@@ -80,6 +84,38 @@ final class Sampler {
             snap.localModelMemoryMB = wl.localModelMemoryMB
         }
 
+        // Disk (host writes to the block layer; cumulative lifetime survives reboot via Disk.swift's JSONL baseline).
+        let d = disk.sample()
+        snap.diskWriteBytesPerSec = round1(d.writeBps)
+        snap.diskReadBytesPerSec  = round1(d.readBps)
+        snap.diskSessionWrittenGB  = round2(Double(d.sessionWrittenBytes)  / 1e9)
+        snap.diskLifetimeWrittenGB = round2(Double(d.lifetimeWrittenBytes) / 1e9)
+        let tbw = SSDWear.ratedTBW(forCapacityBytes: diskCapacityBytes)
+        snap.diskTBWAssumed   = tbw
+        // TODO(NVMe SMART): a verified sudoless NVMe SMART PERCENTAGE_USED, if it ever becomes
+        // available, should REPLACE this derived estimate here and set diskWearBestEffort = false.
+        snap.diskWearPercent     = round2(SSDWear.damagePercent(lifetimeBytes: d.lifetimeWrittenBytes, ratedTBW: tbw))
+        snap.diskWearBestEffort  = true
+        snap.diskWearNote        = SSDWear.note(ratedTBW: tbw)
+
+        // Per-workload attribution: copy each label's session bytes into its Snapshot entry
+        // (host writes, a lower bound; ri_diskio_byteswritten, same-user only).
+        for i in snap.workloads.indices {
+            let bytes = workloads.sessionWrittenBytes(forLabel: snap.workloads[i].label)
+            snap.workloads[i].diskWrittenSessionMB = round2(Double(bytes) / (1024 * 1024))
+        }
+
+        // Low-frequency damage log (append-only JSON-lines; DamageLogger self-throttles to <= once / 5 min).
+        let claudeMB = round2(Double(workloads.sessionWrittenBytes(forLabel: "Claude Code")) / (1024 * 1024))
+        let codexMB  = round2(Double(workloads.sessionWrittenBytes(forLabel: "Codex"))       / (1024 * 1024))
+        damageLog.maybeAppend(sessionWrittenGB: snap.diskSessionWrittenGB,
+                              lifetimeWrittenGB: snap.diskLifetimeWrittenGB,
+                              damagePct: snap.diskWearPercent,
+                              claudeCodeMB: claudeMB, codexMB: codexMB)
+
         return snap
     }
+
+    // Flush the in-memory damage record to disk now (called on app quit; the 5-min throttle bounds loss otherwise).
+    func flushDamageLog() { damageLog.flushNow() }
 }

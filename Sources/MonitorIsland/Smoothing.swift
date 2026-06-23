@@ -21,6 +21,8 @@ final class Smoother: ObservableObject {
     @Published var cpuTempF: Double = 0
     @Published var netDown: Double = 0
     @Published var netUp: Double = 0
+    @Published var diskWrite: Double = 0   // smoothed host write bytes/sec
+    @Published var diskRead: Double = 0    // smoothed host read bytes/sec
     @Published var swapPressure: Double = 0   // smoothed "distance to swap" proxy (SWAP ring fill)
 
     // Smoothed workload memory: aggregate per label, and per individual instance pid.
@@ -30,6 +32,8 @@ final class Smoother: ObservableObject {
 
     // GPU history ring for the sparkline (smoothed samples pushed at the tick rate).
     @Published var gpuHistory: [Double] = []
+    // Disk WRITE history ring for the write-activity sparkline (pushed at tick rate, like gpuHistory).
+    @Published var diskWriteHistory: [Double] = []
     private let historyCap = 60
 
     // Targets (latest sample).
@@ -42,6 +46,8 @@ final class Smoother: ObservableObject {
     private var tCpuTempF: Double = 0
     private var tNetDown: Double = 0
     private var tNetUp: Double = 0
+    private var tDiskWrite: Double = 0
+    private var tDiskRead: Double = 0
     private var tSwapPressure: Double = 0
     private var tWorkloadMem: [String: Double] = [:]
     private var tInstanceMem: [Int32: Double] = [:]
@@ -98,6 +104,8 @@ final class Smoother: ObservableObject {
         if let c = s.cpuTempC { tCpuTempF = Smoother.cToF(c) }
         tNetDown = s.netDownBytesPerSec
         tNetUp = s.netUpBytesPerSec
+        tDiskWrite = s.diskWriteBytesPerSec
+        tDiskRead  = s.diskReadBytesPerSec
         tSwapPressure = s.pressurePercent
 
         // Workload memory targets (aggregate per label + per-instance per pid).
@@ -120,6 +128,10 @@ final class Smoother: ObservableObject {
         if gpuHistory.count > historyCap {
             gpuHistory.removeFirst(gpuHistory.count - historyCap)
         }
+        diskWriteHistory.append(s.diskWriteBytesPerSec)
+        if diskWriteHistory.count > historyCap {
+            diskWriteHistory.removeFirst(diskWriteHistory.count - historyCap)
+        }
 
         // New sample may have moved a target away from its displayed value; wake the glide.
         resumeIfNeeded()
@@ -136,6 +148,8 @@ final class Smoother: ObservableObject {
         cpuTempF = tCpuTempF
         netDown = tNetDown
         netUp = tNetUp
+        diskWrite = tDiskWrite
+        diskRead = tDiskRead
         swapPressure = tSwapPressure
         workloadMem = tWorkloadMem
         instanceMem = tInstanceMem
@@ -166,6 +180,8 @@ final class Smoother: ObservableObject {
         // Net rates: scale the gap down to the %/GB epsilon basis (1 unit per ~1KB/s).
         gap((tNetDown - netDown) / 1000.0); netDown += (tNetDown - netDown) * k
         gap((tNetUp - netUp) / 1000.0);     netUp += (tNetUp - netUp) * k
+        gap((tDiskWrite - diskWrite) / 1000.0); diskWrite += (tDiskWrite - diskWrite) * k
+        gap((tDiskRead - diskRead) / 1000.0);   diskRead  += (tDiskRead - diskRead) * k
         gap(tSwapPressure - swapPressure);  swapPressure += (tSwapPressure - swapPressure) * k
         for (key, target) in tWorkloadMem {
             let cur = workloadMem[key] ?? target
