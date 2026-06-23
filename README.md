@@ -1,5 +1,7 @@
 # Monitor Island
 
+A Promptable Technologies open-source project — https://promptable.us
+
 A small, draggable, always-on-top "island" panel for Apple Silicon Macs that shows live
 chip-level activity and which AI workloads are running (a local model, Claude Code, the Claude
 desktop app, Codex). It is built to keep a watchful eye on what AI work is doing to the
@@ -13,14 +15,15 @@ frameworks that macmon, mactop, and Stats use.
 
 Get the latest DMG from the GitHub release:
 
-- https://github.com/seisenstein/monitor-island/releases/latest
-- Direct: https://github.com/seisenstein/monitor-island/releases/download/v1.1.0/MonitorIsland.dmg
+- https://github.com/Promptable-Technologies/monitor-island/releases/latest
+- Direct: https://github.com/Promptable-Technologies/monitor-island/releases/download/v1.2.0/MonitorIsland.dmg
 
 ## Requirements: Apple Silicon only
 
 Monitor Island is arm64 and Apple Silicon only (M1 through M5 and newer, including the M5
 "Super" cores). The sensor APIs it uses do not exist on Intel Macs, so the recipient must
-also be on Apple Silicon. Minimum macOS 14.
+also be on Apple Silicon. Runs on **macOS Sonoma 14.7.1 through macOS Tahoe 26**. Intel Macs
+are not supported and never will be.
 
 ## One-time install (it is not notarized)
 
@@ -43,6 +46,16 @@ Click the island to expand or collapse it. Drag it anywhere. The menu has Show/H
 camera (centers it just below the notch/camera and keeps it centered as it expands; dragging it
 unsnaps), the refresh interval (1, 2, 5 seconds), a local-model overlay toggle, and Quit.
 
+## Features
+
+- Live GPU utilization, unified-memory pressure, CPU (E+P core split), power in watts, die temperature
+- Network up/down rate
+- Workload detection: Claude Code, Claude desktop, Codex, local models (LM Studio / llama.cpp)
+- Real-time SSD write tracking with a best-effort wear estimate and per-process attribution (Claude Code, Codex) — the wear % is a derived best-effort estimate (Apple publishes no TBW), labeled "~/est"
+- Draggable, always-on-top pill that collapses to a compact view
+- Snap-under-camera mode for notched displays
+- Liquid Glass background on macOS Tahoe 26; frosted `.ultraThinMaterial` on Sonoma/Sequoia
+
 ## Which sudoless API backs each metric
 
 | Metric | API | Private? |
@@ -54,12 +67,13 @@ unsnaps), the refresh interval (1, 2, 5 seconds), a local-model overlay toggle, 
 | CPU / GPU / ANE / DRAM power (watts) | IOReport "Energy Model" group | Yes (IOReport) |
 | Temperature (die sensors) | IOHIDEventSystemClient thermal sensors (PrimaryUsagePage 0xff00, usage 5) | Yes (IOHID) |
 | Network up/down rate | `getifaddrs` per-interface byte counters, delta per tick | No |
+| SSD writes, wear estimate | IOKit `IOBlockStorageDriver` -> `Statistics` -> `Bytes Written`, lifetime accumulation log | No |
 | Workload detection (GUI) | `NSWorkspace.runningApplications` | No |
 | Workload detection (CLI) | `proc_listpids` + `proc_pidpath` + `KERN_PROCARGS2` + `proc_pid_rusage` | No |
 | Local model name | LM Studio / llama.cpp OpenAI-compatible `/v1/models`, or the `-m` / `-hf` arg | No |
 
-A single sampler holds the previous sample and computes all deltas (CPU, power, network) once
-per tick, then publishes one snapshot the UI reads.
+A single sampler holds the previous sample and computes all deltas (CPU, power, network, SSD writes)
+once per tick, then publishes one snapshot the UI reads.
 
 ### Private frameworks and the no-App-Store consequence
 
@@ -87,6 +101,10 @@ distributed as a DMG. That also means no App Store sandbox, which is fine and ex
   (normal/warning/critical — the OS's own swap trigger), so the warning and critical zones are
   ground truth even though the smooth fill inside a band is an estimate. This lets you watch how
   close you are to swapping long before any page is written.
+- SSD wear % is best-effort. Apple does not publish a rated TBW for its SSD controllers. The
+  estimate uses lifetime-written bytes vs. a conservative reference figure and is labeled "~/est"
+  in the UI to flag the approximation. Per-process SSD write attribution (Claude Code, Codex) is
+  accurate to the tick granularity of `proc_pid_rusage`.
 
 ## Self-test and verification modes
 
@@ -109,3 +127,7 @@ swift build -c release        # build
 ```
 
 Apple Silicon only. Do not use `powermetrics`; all live metrics are sudoless.
+
+## License
+
+MIT License — © 2026 Promptable Technologies. See [LICENSE](LICENSE).

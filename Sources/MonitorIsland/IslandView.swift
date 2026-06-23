@@ -54,6 +54,7 @@ struct RingGauge: View {
 struct Sparkline: View {
     var data: [Double]
     var accent: Color = Theme.sky
+    var height: CGFloat = 30
 
     // Smooth curve through the points (Catmull-Rom -> cubic bezier, tension 1/6).
     private func curve(_ pts: [CGPoint], closedTo bottom: CGFloat?) -> Path {
@@ -107,7 +108,7 @@ struct Sparkline: View {
                 }
             }
         }
-        .frame(height: 30)
+        .frame(height: height)
     }
 }
 
@@ -151,10 +152,11 @@ struct IslandView: View {
     // there is less time for any reactive system to fight it; high damping avoids overshoot.
     private let expandSpring: Animation = .spring(response: 0.28, dampingFraction: 0.82)
 
-    init(model: IslandModel, preExpand: Set<String> = []) {
+    init(model: IslandModel, preExpand: Set<String> = [], preShowSettings: Bool = false) {
         self.model = model
         self.s = model.smoother
         _expandedWorkloads = State(initialValue: preExpand)
+        _showSettings = State(initialValue: preShowSettings)
     }
 
     var snap: Snapshot { model.snap }
@@ -311,18 +313,26 @@ struct IslandView: View {
 
     // Compact pill. A dropdown caret signals it expands; tap anywhere to expand.
     var compact: some View {
-        HStack(spacing: 11) {
-            metric("GPU", Int(s.gpu.rounded()), "%", accent)
-            metric("MEM", Int(s.memUsedPercent.rounded()), "%", accent)
-            metric("CPU", Int(s.cpuTotal.rounded()), "%", accent)
-            // 4th metric: SWAP. Number is exact swap-used % (ground truth, 0 until the
-            // machine actually pages to SSD); the label color escalates accent->amber->red
-            // with the kernel pressure level, so the pill warns you well before that.
-            metric("SWAP", Int(snap.swapUsedPercent.rounded()), "%",
-                   swapColor(snap.pressureLevel))
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(Theme.textFaint)
+        VStack(spacing: 7) {
+            HStack(spacing: 11) {
+                metric("GPU", Int(s.gpu.rounded()), "%", accent)
+                metric("MEM", Int(s.memUsedPercent.rounded()), "%", accent)
+                metric("CPU", Int(s.cpuTotal.rounded()), "%", accent)
+                // SWAP: number is exact swap-used %; label escalates accent->amber->red with
+                // kernel pressure, warning before the machine actually pages to SSD.
+                metric("SWAP", Int(snap.swapUsedPercent.rounded()), "%",
+                       swapColor(snap.pressureLevel))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.textFaint)
+            }
+            // SSD reader: its own row directly below GPU/CPU/MEM/SWAP, visible even when closed.
+            SSDReader(writeHistory: s.diskWriteHistory,
+                      wearPercent: snap.diskWearPercent,
+                      lifetimeGB: snap.diskLifetimeWrittenGB,
+                      accent: accent,
+                      wearColor: diskWearColor(snap.diskWearPercent),
+                      compact: true)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .fixedSize()
@@ -398,6 +408,16 @@ struct IslandView: View {
             }
             .frame(maxWidth: .infinity)
 
+            // SSD reader: the cohesive disk surface, directly below the rings and above
+            // Memory/Temp (replaces the old Net + Disk-throughput rows). Best-effort wear
+            // estimate + cumulative "life" + a live write-activity sparkline, grouped as one.
+            SSDReader(writeHistory: s.diskWriteHistory,
+                      wearPercent: snap.diskWearPercent,
+                      lifetimeGB: snap.diskLifetimeWrittenGB,
+                      accent: accent,
+                      wearColor: diskWearColor(snap.diskWearPercent),
+                      compact: false)
+
             row("Memory",
                 String(format: "%.2f / %.2f GB", s.memUsedGB, snap.memTotalGB),
                 trailing: String(format: "%.2f free", s.headroomGB),
@@ -408,10 +428,6 @@ struct IslandView: View {
             if snap.cpuTempC != nil {
                 row("Temp", String(format: "%.0f\u{00b0}F", s.cpuTempF))
             }
-
-            row("Net",
-                String(format: "\u{2193} %@", fmtRate(s.netDown)),
-                trailing: String(format: "\u{2191} %@", fmtRate(s.netUp)))
 
             if !s.gpuHistory.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -439,7 +455,7 @@ struct IslandView: View {
         .frame(width: 292)
     }
 
-    func row(_ label: String, _ value: String, trailing: String? = nil, warn: Bool = false) -> some View {
+    func row(_ label: String, _ value: String, trailing: String? = nil, warn: Bool = false, valueColor: Color? = nil) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label.uppercased())
                 .font(.brand(8, weight: .semibold))
@@ -450,7 +466,7 @@ struct IslandView: View {
                 .font(.mono(11, weight: .medium))
                 .monospacedDigit()
                 .contentTransition(.numericText())
-                .foregroundStyle(warn ? accent : Theme.textPrimary)
+                .foregroundStyle(valueColor ?? (warn ? accent : Theme.textPrimary))
             Spacer(minLength: 0)
             if let trailing = trailing {
                 Text(trailing)
@@ -477,10 +493,13 @@ struct IslandView: View {
         let isOpen = expandedWorkloads.contains(w.label)
         VStack(alignment: .leading, spacing: 6) {
             Button {
-                guard canDrill else { return }
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
-                    if isOpen { expandedWorkloads.remove(w.label) }
-                    else { expandedWorkloads.insert(w.label) }
+                if canDrill {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.82)) {
+                        if isOpen { expandedWorkloads.remove(w.label) }
+                        else { expandedWorkloads.insert(w.label) }
+                    }
+                } else if let only = w.instances.first {
+                    WorkloadOpener.open(pid: only.pid)   // single-instance group → open it directly
                 }
             } label: {
                 HStack(spacing: 7) {
@@ -504,23 +523,23 @@ struct IslandView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .onHover { h in if h { NSCursor.pointingHand.push() } else { NSCursor.pop() } }
+
+            if (w.label.contains("Claude") || w.label.contains("Codex")) && w.diskWrittenSessionMB > 0 {
+                Text("wrote \(fmtMem(w.diskWrittenSessionMB))")
+                    .font(.mono(11, weight: .regular))
+                    .foregroundStyle(Theme.textFaint)
+                    .padding(.leading, 13)   // align under the workload name, past the dot
+            }
 
             if canDrill && isOpen {
                 VStack(alignment: .leading, spacing: 7) {
                     ForEach(w.instances, id: \.pid) { inst in
-                        HStack(spacing: 8) {
-                            Circle().fill(color.opacity(0.55)).frame(width: 5, height: 5)
-                            Text(inst.label)
-                                .font(.mono(11.5, weight: .regular))
-                                .foregroundStyle(Theme.textSecondary)
-                                .lineLimit(1).truncationMode(.middle)
-                            Spacer(minLength: 6)
-                            Text(fmtMem(s.instanceMem[inst.pid] ?? inst.memoryMB))
-                                .font(.mono(11.5, weight: .medium))
-                                .monospacedDigit()
-                                .contentTransition(.numericText())
-                                .foregroundStyle(Theme.textSecondary)
-                        }
+                        WorkloadInstanceRow(
+                            label: inst.label,
+                            memText: fmtMem(s.instanceMem[inst.pid] ?? inst.memoryMB),
+                            dotColor: color.opacity(0.55),
+                            onOpen: { WorkloadOpener.open(pid: inst.pid) })
                     }
                 }
                 .padding(.leading, 15)
@@ -550,9 +569,53 @@ struct IslandView: View {
         return String(format: "%.2f MB", mb)
     }
 
-    func fmtRate(_ bps: Double) -> String {
-        if bps > 1_000_000 { return String(format: "%.1f MB/s", bps / 1_000_000) }
-        if bps > 1_000 { return String(format: "%.0f KB/s", bps / 1_000) }
-        return String(format: "%.0f B/s", bps)
+    // SSD damage escalation: accent under 10% (derived estimate, low), amber 10–50%, red >= 50%.
+    // Reuses ONLY the documented pressure-exception colors — no new palette entries.
+    func diskWearColor(_ pct: Double) -> Color {
+        pct >= 50 ? Theme.pressureCritical : (pct >= 10 ? Theme.pressureWarn : accent)
+    }
+}
+
+// A clickable workload-instance row: tapping opens the process's working directory (e.g. a
+// Claude Code session's project folder) / activates its app. Hover gives a highlight, an
+// external-link arrow, and a pointing-hand cursor so it reads as openable.
+private struct WorkloadInstanceRow: View {
+    let label: String
+    let memText: String
+    let dotColor: Color
+    let onOpen: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 8) {
+                Circle().fill(dotColor).frame(width: 5, height: 5)
+                Text(label)
+                    .font(.mono(11.5, weight: .regular))
+                    .foregroundStyle(hovered ? Theme.textPrimary : Theme.textSecondary)
+                    .lineLimit(1).truncationMode(.middle)
+                if hovered {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.textFaint)
+                }
+                Spacer(minLength: 6)
+                Text(memText)
+                    .font(.mono(11.5, weight: .medium))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.vertical, 2).padding(.horizontal, 4)
+            .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(hovered ? Theme.snow.opacity(0.06) : Color.clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { h in
+            hovered = h
+            if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
+        .help("Open in Finder")
     }
 }

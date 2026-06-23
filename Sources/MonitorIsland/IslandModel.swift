@@ -50,6 +50,8 @@ final class IslandModel: ObservableObject {
         restartTimer()
     }
 
+    func flushDamageLog() { sampler.flushDamageLog() }
+
     private func restartTimer() {
         timer?.cancel()
         let t = DispatchSource.makeTimerSource(queue: queue)

@@ -5,7 +5,7 @@ import AppKit
 // SwiftUI UI with live sampled values without needing Screen Recording permission.
 enum Shot {
     @MainActor
-    static func render(to path: String) {
+    static func render(to path: String, compact: Bool = false, settings: Bool = false) {
         FontLoader.register()
 
         let sampler = Sampler()
@@ -13,7 +13,7 @@ enum Shot {
         usleep(400_000)
 
         let model = IslandModel()
-        model.expanded = true
+        model.expanded = !compact
 
         // Build a short real GPU history for the sparkline and feed the smoother.
         var last = Snapshot()
@@ -40,9 +40,11 @@ enum Shot {
         }()
         let content = ZStack {
             bg
-            IslandView(model: model, preExpand: ["Claude Code"]).frame(width: 292)
+            IslandView(model: model,
+                       preExpand: settings ? [] : ["Claude Code"],
+                       preShowSettings: settings).frame(width: compact ? nil : 292)
         }
-        .frame(width: 380, height: 600)
+        .frame(width: 380, height: compact ? 210 : (settings ? 560 : 900))
         .clipped()
 
         let renderer = ImageRenderer(content: content)

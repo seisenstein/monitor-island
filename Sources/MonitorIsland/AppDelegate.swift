@@ -49,6 +49,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.start()
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // Force a final damage-log flush so the last few minutes of writes are persisted
+        // (the in-memory accumulator otherwise only flushes every 5 min).
+        model.flushDamageLog()
+    }
+
     private func buildWindow() {
         // Build a window that is borderless FROM CREATION. Using
         // NSWindow(contentViewController:) creates a titled window and then mutating

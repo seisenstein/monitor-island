@@ -7,8 +7,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 APP_NAME="MonitorIsland"
-BUNDLE_ID="com.seisenstein.monitorisland"
-VERSION="1.0.0"
+BUNDLE_ID="com.promptable.monitorisland"
+VERSION="1.2.0"
 
 echo "[package] building Release..."
 swift build -c release >/dev/null
@@ -21,6 +21,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp -R "$ROOT/Sources/MonitorIsland/Resources/fonts" "$APP/Contents/Resources/fonts"
+cp "$ROOT/Sources/MonitorIsland/Resources/PromptableWordmark.png" "$APP/Contents/Resources/PromptableWordmark.png"
 
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 
@@ -40,6 +41,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSHumanReadableCopyright</key><string>© 2026 Promptable Technologies — MIT License</string>
 </dict>
 </plist>
 PLIST

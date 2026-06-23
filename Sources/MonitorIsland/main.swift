@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import IOKit
 
 let args = CommandLine.arguments
 
@@ -70,9 +71,56 @@ func runSensors() {
                          c.group as NSString, c.name as NSString, c.unit as NSString, c.watts))
         }
     }
+
+    print("\n=== Disk (IOBlockStorageDriver Statistics + derived wear) ===")
+    var diskIter: io_iterator_t = 0
+    if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &diskIter) == KERN_SUCCESS {
+        defer { IOObjectRelease(diskIter) }
+        var totalWrite: UInt64 = 0, totalRead: UInt64 = 0
+        var idx = 0
+        var svc = IOIteratorNext(diskIter)
+        while svc != 0 {
+            defer { IOObjectRelease(svc); svc = IOIteratorNext(diskIter) }
+            var props: Unmanaged<CFMutableDictionary>? = nil
+            guard IORegistryEntryCreateCFProperties(svc, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+                  let dict = props?.takeRetainedValue() as? [String: Any],
+                  let stats = dict["Statistics"] as? [String: Any] else { continue }
+            let w = (stats["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
+            let r = (stats["Bytes (Read)"] as? NSNumber)?.uint64Value ?? 0
+            totalWrite &+= w; totalRead &+= r
+            let marker = w > 0 ? "  <-- non-zero writer (internal SSD)" : ""
+            print(String(format: "  driver[%d]  write=%@ GB  read=%@ GB%@",
+                         idx,
+                         String(format: "%.1f", Double(w) / 1e9),
+                         String(format: "%.1f", Double(r) / 1e9),
+                         marker))
+            idx += 1
+        }
+        print(String(format: "  SUMMED host total: write=%.1f GB  read=%.1f GB", Double(totalWrite) / 1e9, Double(totalRead) / 1e9))
+    } else {
+        print("  (no IOBlockStorageDriver services returned)")
+    }
+    let capBytes = SSDWear.capacityBytes()
+    let tbw = SSDWear.ratedTBW(forCapacityBytes: capBytes)
+    let dsample = DiskSampler().sample()
+    print(String(format: "  capacity (IONVMeController capacity): %.0f GB", Double(capBytes) / 1e9))
+    print(String(format: "  chosen TBW tier: %.0f TB", tbw))
+    print(String(format: "  lifetime host written (this run's baseline): %.1f GB", Double(dsample.lifetimeWrittenBytes) / 1e9))
+    print(String(format: "  derived wear estimate: ~%.3f%% est (best-effort)", SSDWear.damagePercent(lifetimeBytes: dsample.lifetimeWrittenBytes, ratedTBW: tbw)))
+    print("  note: \(SSDWear.note(ratedTBW: tbw))")
 }
 
-if let i = args.firstIndex(of: "--shot") {
+if let i = args.firstIndex(of: "--shot-settings") {
+    FontLoader.register()
+    let path = (i + 1 < args.count) ? args[i + 1] : "island-settings.png"
+    MainActor.assumeIsolated { Shot.render(to: path, settings: true) }
+    exit(0)
+} else if let i = args.firstIndex(of: "--shot-compact") {
+    FontLoader.register()
+    let path = (i + 1 < args.count) ? args[i + 1] : "island-compact.png"
+    MainActor.assumeIsolated { Shot.render(to: path, compact: true) }
+    exit(0)
+} else if let i = args.firstIndex(of: "--shot") {
     FontLoader.register()
     let path = (i + 1 < args.count) ? args[i + 1] : "island.png"
     MainActor.assumeIsolated { Shot.render(to: path) }
