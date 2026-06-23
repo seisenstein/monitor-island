@@ -95,6 +95,37 @@ final class WorkloadSampler {
         return (info.ri_diskio_byteswritten, info.ri_proc_start_abstime)
     }
 
+    // Collapse matched processes (a tool's worker/helper tree) into logical sessions: one entry
+    // per "leader" (a matched pid whose parent is NOT itself matched). Session memory sums the
+    // tree; the representative pid prefers a member with a real project working directory, so the
+    // label reads as the project and a click can walk up to the owning terminal / app.
+    private func sessions(from matches: [(pid: Int32, mem: Double)]) -> [(pid: Int32, mem: Double)] {
+        guard !matches.isEmpty else { return [] }
+        let set = Set(matches.map { $0.pid })
+        func leaderOf(_ pid: Int32) -> Int32 {
+            var cur = pid, hops = 0
+            while hops < 30 {
+                let pp = parentPID(of: cur)
+                if pp > 1, set.contains(pp) { cur = pp; hops += 1 } else { break }
+            }
+            return cur
+        }
+        var members: [Int32: [Int32]] = [:]
+        var memByLeader: [Int32: Double] = [:]
+        for m in matches {
+            let L = leaderOf(m.pid)
+            members[L, default: []].append(m.pid)
+            memByLeader[L, default: 0] += m.mem
+        }
+        return members.map { (leader, pids) in
+            let rep = pids.first(where: { p in
+                if let c = cwd(for: p) { return c != NSHomeDirectory() && c != "/" }
+                return false
+            }) ?? leader
+            return (pid: rep, mem: memByLeader[leader] ?? 0)
+        }
+    }
+
     // Current working directory of a pid (sudoless, own processes), used to label
     // an individual session (e.g. a Claude Code session by its project folder).
     private func cwd(for pid: Int32) -> String? {
@@ -151,6 +182,9 @@ final class WorkloadSampler {
 
         var localModelName: String? = nil
         var localModelMem: Double? = nil
+        // Matched Claude Code / Codex processes; collapsed into logical sessions after the scan.
+        var claudeMatches: [(pid: Int32, mem: Double)] = []
+        var codexMatches:  [(pid: Int32, mem: Double)] = []
 
         for p in procs {
             let nameL = p.name.lowercased()
@@ -179,7 +213,7 @@ final class WorkloadSampler {
                     instWritten[p.pid] = (instWritten[p.pid] ?? 0) + delta
                 }
                 diskBaseline[p.pid] = cur
-                add("Claude Code", pid: p.pid, mem: p.residentMB)
+                claudeMatches.append((pid: p.pid, mem: p.residentMB))
                 continue
             }
             // Codex CLI. Current Codex launches a node wrapper that spawns a native
@@ -195,7 +229,7 @@ final class WorkloadSampler {
                     instWritten[p.pid] = (instWritten[p.pid] ?? 0) + delta
                 }
                 diskBaseline[p.pid] = cur
-                add("Codex", pid: p.pid, mem: p.residentMB)
+                codexMatches.append((pid: p.pid, mem: p.residentMB))
                 continue
             }
             // llama.cpp local model server
@@ -226,6 +260,10 @@ final class WorkloadSampler {
                 continue
             }
         }
+
+        // Collapse Claude Code / Codex worker trees into logical sessions (one entry per leader).
+        for sess in sessions(from: claudeMatches) { add("Claude Code", pid: sess.pid, mem: sess.mem) }
+        for sess in sessions(from: codexMatches)  { add("Codex", pid: sess.pid, mem: sess.mem) }
 
         // GUI apps via NSWorkspace.
         for app in NSWorkspace.shared.runningApplications {
@@ -271,44 +309,35 @@ final class WorkloadSampler {
     func sessionWrittenBytes(forLabel label: String) -> UInt64 { sessionWritten[label] ?? 0 }
 }
 
-// Opens "the thing" a workload instance represents, for the click-to-open affordance in the
-// expanded island. Best-effort and sudoless: prefer the process's working directory (e.g. a
-// Claude Code session's project folder), then fall back to activating the app, then to
-// revealing the executable in Finder.
+// Parent PID via libproc (sudoless, same-user). Used to collapse worker trees into logical
+// sessions and to walk up to the owning app for click-to-activate.
+fileprivate func parentPID(of pid: Int32) -> Int32 {
+    var info = proc_bsdinfo()
+    let r = proc_pidinfo(pid, 3 /* PROC_PIDTBSDINFO */, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.stride))
+    return r > 0 ? Int32(info.pbi_ppid) : 0
+}
+
+// Click-to-open: bring the actually-running instance to the front. If the pid is itself a GUI
+// app, activate it; otherwise walk up the parent chain to the owning app — the terminal hosting
+// a CLI session, or Claude.app hosting an agent session — and activate that. (No Finder.)
 enum WorkloadOpener {
     static func open(pid: Int32) {
-        // 1. Working directory (most useful for CLI tools like Claude Code / Codex sessions):
-        //    open the folder in Finder.
-        if let dir = workingDirectory(for: pid),
-           FileManager.default.fileExists(atPath: dir) {
-            NSWorkspace.shared.open(URL(fileURLWithPath: dir, isDirectory: true))
-            return
-        }
-        // 2. A GUI app with this pid → bring it to the front.
-        if let app = NSRunningApplication(processIdentifier: pid) {
-            app.activate(options: [.activateAllWindows])
-            return
-        }
-        // 3. Last resort: reveal the executable in Finder.
-        if let p = executablePath(for: pid), !p.isEmpty {
-            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)])
+        if activate(pid: pid) { return }
+        var cur = pid, hops = 0
+        while hops < 30 {
+            let pp = parentPID(of: cur)
+            guard pp > 1 else { break }
+            if activate(pid: pp) { return }
+            cur = pp; hops += 1
         }
     }
 
-    private static func workingDirectory(for pid: Int32) -> String? {
-        var vpi = proc_vnodepathinfo()
-        let sz = Int32(MemoryLayout<proc_vnodepathinfo>.stride)
-        let r = proc_pidinfo(pid, 9 /* PROC_PIDVNODEPATHINFO */, 0, &vpi, sz)
-        guard r > 0 else { return nil }
-        let path = withUnsafeBytes(of: &vpi.pvi_cdir.vip_path) { raw -> String in
-            String(cString: raw.bindMemory(to: CChar.self).baseAddress!)
-        }
-        return path.isEmpty ? nil : path
-    }
-
-    private static func executablePath(for pid: Int32) -> String? {
-        var buf = [CChar](repeating: 0, count: 4096)
-        let r = proc_pidpath(pid, &buf, UInt32(buf.count))
-        return r > 0 ? String(cString: buf) : nil
+    // Activate the app owning `pid`, if it is a real (regular/accessory) application.
+    @discardableResult
+    private static func activate(pid: Int32) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: pid),
+              app.activationPolicy != .prohibited else { return false }
+        app.activate(options: [.activateAllWindows])
+        return true
     }
 }
