@@ -44,11 +44,11 @@ struct Snapshot: Codable {
     var memUsedGB: Double = 0
     var memUsedPercent: Double = 0
     var headroomGB: Double = 0
-    var swapUsedGB: Double = 0
-    var swapTotalGB: Double = 0
-    var swapUsedPercent: Double = 0    // exact swap used as % of unified memory (ground truth)
-    var pressurePercent: Double = 0    // 0..100 "distance to swap" proxy (gauge fill, best-effort)
-    var pressureLevel: Int = 1         // kernel: 1 normal, 2 warning, 4 critical (exact)
+    var swapUsedGB: Double = 0         // exact swap currently in use (vm.swapusage), GB — ground truth
+    var swapTotalGB: Double = 0        // current swap-file allocation (grows on demand), GB
+    var swapUsedPercent: Double = 0    // swap used as % of the allocated swap file (used/total); 0 when no swap
+    var pressurePercent: Double = 0    // SWAP ring fill 0..100, driven by the kernel pressure LEVEL (not RAM fullness)
+    var pressureLevel: Int = 1         // kernel: 1 normal, 2 warning, 4 critical (exact ground truth)
     var memoryPressure: Bool = false
 
     // GPU
@@ -73,15 +73,14 @@ struct Snapshot: Codable {
     var netDownBytesPerSec: Double = 0
     var netUpBytesPerSec: Double = 0
 
-    // Disk (host writes to the block layer — NOT NAND writes; see Disk.swift)
+    // Disk (host writes to the internal NVMe block layer — NOT NAND writes; see Disk.swift)
     var diskWriteBytesPerSec: Double = 0
     var diskReadBytesPerSec: Double = 0
     var diskSessionWrittenGB: Double = 0     // host bytes written this app session
-    var diskLifetimeWrittenGB: Double = 0    // cumulative since Monitor Island first ran (survives reboot); a verifiable lower bound
-    var diskWearPercent: Double = 0          // DERIVED best-effort estimate (see diskWearNote)
-    var diskWearBestEffort: Bool = true      // ALWAYS true in v1 — there is no verified NVMe SMART odometer
-    var diskTBWAssumed: Double = 1000        // the assumed rated TBW used for the estimate
-    var diskWearNote: String? = nil          // states the TBW assumption + write-amplification caveat
+    var diskTotalWrittenGB: Double = 0       // cumulative host writes OBSERVED since diskTrackingSince (survives reboot); a lower bound, NOT drive lifetime
+    var diskTrackingSince: String? = nil     // ISO date this install began counting (first launch)
+    var diskCapacityGB: Double = 0           // internal SSD capacity (decimal GB), for context; 0 if unavailable
+    var diskWriteNote: String? = nil         // honest caveat: what these numbers are and are not
 
     // Workloads
     var workloads: [WorkloadEntry] = []

@@ -310,34 +310,9 @@ final class WorkloadSampler {
 }
 
 // Parent PID via libproc (sudoless, same-user). Used to collapse worker trees into logical
-// sessions and to walk up to the owning app for click-to-activate.
-fileprivate func parentPID(of pid: Int32) -> Int32 {
+// sessions and to walk up to the owning app for click-to-focus.
+func parentPID(of pid: Int32) -> Int32 {
     var info = proc_bsdinfo()
     let r = proc_pidinfo(pid, 3 /* PROC_PIDTBSDINFO */, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.stride))
     return r > 0 ? Int32(info.pbi_ppid) : 0
-}
-
-// Click-to-open: bring the actually-running instance to the front. If the pid is itself a GUI
-// app, activate it; otherwise walk up the parent chain to the owning app — the terminal hosting
-// a CLI session, or Claude.app hosting an agent session — and activate that. (No Finder.)
-enum WorkloadOpener {
-    static func open(pid: Int32) {
-        if activate(pid: pid) { return }
-        var cur = pid, hops = 0
-        while hops < 30 {
-            let pp = parentPID(of: cur)
-            guard pp > 1 else { break }
-            if activate(pid: pp) { return }
-            cur = pp; hops += 1
-        }
-    }
-
-    // Activate the app owning `pid`, if it is a real (regular/accessory) application.
-    @discardableResult
-    private static func activate(pid: Int32) -> Bool {
-        guard let app = NSRunningApplication(processIdentifier: pid),
-              app.activationPolicy != .prohibited else { return false }
-        app.activate(options: [.activateAllWindows])
-        return true
-    }
 }

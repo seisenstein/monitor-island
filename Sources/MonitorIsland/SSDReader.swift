@@ -1,22 +1,41 @@
 import SwiftUI
 
-// The cohesive "SSD reader" — the disk story as one unit: the best-effort wear estimate, the
-// cumulative host-bytes-written ("life"), and a live write-activity sparkline. It is the single
-// disk surface (Net and raw Disk-throughput rows were removed) and appears directly below the
-// GPU/CPU/MEM/SWAP block in BOTH states: a tidy one-liner in the compact pill, and a grouped
-// block (with the write sparkline) at the top of the expanded card.
+// The cohesive "SSD reader" — the internal-SSD write story as one unit: the live write rate, a
+// write-activity sparkline, and the cumulative host bytes Monitor Island has OBSERVED since it
+// started tracking (honestly scoped to a start date, never presented as drive lifetime). No wear %:
+// true NAND wear is not readable sudoless on Apple Silicon, so any wear figure would be invented.
+// It is the single disk surface and appears directly below the GPU/CPU/MEM/SWAP block in BOTH
+// states: a tidy one-liner in the compact pill, and a grouped block (with the sparkline) in the
+// expanded card.
 struct SSDReader: View {
-    var writeHistory: [Double]   // smoothed write-rate ring (Smoother.diskWriteHistory)
-    var wearPercent: Double      // derived best-effort wear estimate (Snapshot.diskWearPercent)
-    var lifetimeGB: Double       // cumulative host bytes written, "life" (Snapshot.diskLifetimeWrittenGB)
+    var writeHistory: [Double]    // smoothed write-rate ring (Smoother.diskWriteHistory)
+    var writeBytesPerSec: Double  // smoothed current write rate (Smoother.diskWrite)
+    var totalWrittenGB: Double    // cumulative observed host writes (Snapshot.diskTotalWrittenGB)
+    var since: String             // formatted tracking-start date, "" if unknown
+    var capacityGB: Double        // internal SSD capacity for context; 0 hides it
+    var note: String              // honest caveat (tooltip)
     var accent: Color
-    var wearColor: Color         // accent → amber → red with wear (diskWearColor)
     var compact: Bool
 
-    private var wearText: String { String(format: "~%.2f%% est", wearPercent) }
-    private var lifeText: String {
-        lifetimeGB >= 1000 ? String(format: "%.2f TB", lifetimeGB / 1000)
-                           : String(format: "%.0f GB", lifetimeGB)
+    private var rateText: String {
+        let bps = writeBytesPerSec
+        if bps < 1 { return "idle" }
+        if bps < 1_000_000 { return String(format: "%.0f KB/s", bps / 1_000) }
+        return String(format: "%.1f MB/s", bps / 1_000_000)
+    }
+    private var totalText: String {
+        if totalWrittenGB >= 1000 { return String(format: "%.2f TB", totalWrittenGB / 1000) }
+        if totalWrittenGB < 10    { return String(format: "%.1f GB", totalWrittenGB) }
+        return String(format: "%.0f GB", totalWrittenGB)
+    }
+    private var sinceLine: String {
+        var s = since.isEmpty ? "written" : "written since \(since)"
+        if capacityGB > 0 {
+            let cap = capacityGB >= 1000 ? String(format: "%.0f TB", capacityGB / 1000)
+                                         : String(format: "%.0f GB", capacityGB)
+            s += " · \(cap) drive"
+        }
+        return s
     }
 
     var body: some View {
@@ -29,10 +48,10 @@ struct SSDReader: View {
             Text("SSD")
                 .font(.brand(8, weight: .semibold)).tracking(0.6)
                 .foregroundStyle(accent.opacity(0.95))
-            Text(wearText)
+            Text(rateText)
                 .font(.mono(10.5, weight: .semibold)).monospacedDigit()
                 .contentTransition(.numericText())
-                .foregroundStyle(wearColor)
+                .foregroundStyle(accent)
             if !writeHistory.isEmpty {
                 Sparkline(data: writeHistory, accent: accent, height: 14)
                     .frame(maxWidth: .infinity)
@@ -40,28 +59,29 @@ struct SSDReader: View {
             } else {
                 Spacer(minLength: 0)
             }
-            Text(lifeText)
+            Text(totalText)
                 .font(.mono(10.5, weight: .medium)).monospacedDigit()
                 .contentTransition(.numericText())
                 .foregroundStyle(Theme.textFaint)
         }
+        .help(note)
     }
 
-    // Expanded card: a grouped block — header line + the write-activity sparkline — read as one
-    // thing via a subtle inner fill, positioned at the top (below the rings, above Memory/Temp).
+    // Expanded card: a grouped block — header line + write-activity sparkline + a faint "written
+    // since <date>" line — read as one thing via a subtle inner fill, below the rings.
     private var fullBlock: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text("SSD")
                     .font(.brand(8, weight: .semibold)).tracking(0.8)
                     .foregroundStyle(Theme.textFaint)
                     .frame(width: 30, alignment: .leading)
-                Text(wearText)
+                Text(rateText)
                     .font(.mono(12, weight: .semibold)).monospacedDigit()
                     .contentTransition(.numericText())
-                    .foregroundStyle(wearColor)
+                    .foregroundStyle(accent)
                 Spacer(minLength: 0)
-                Text(lifeText + " life")
+                Text(totalText)
                     .font(.mono(11, weight: .medium)).monospacedDigit()
                     .contentTransition(.numericText())
                     .foregroundStyle(Theme.textSecondary)
@@ -69,6 +89,9 @@ struct SSDReader: View {
             if !writeHistory.isEmpty {
                 Sparkline(data: writeHistory, accent: accent, height: 26)
             }
+            Text(sinceLine)
+                .font(.mono(8.5, weight: .regular)).monospacedDigit()
+                .foregroundStyle(Theme.textFaint)
         }
         .padding(.horizontal, 11)
         .padding(.vertical, 9)
@@ -80,5 +103,6 @@ struct SSDReader: View {
             RoundedRectangle(cornerRadius: 13, style: .continuous)
                 .stroke(accent.opacity(0.16), lineWidth: 1)
         )
+        .help(note)
     }
 }

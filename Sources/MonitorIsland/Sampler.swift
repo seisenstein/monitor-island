@@ -11,7 +11,7 @@ final class Sampler {
     private let workloads = WorkloadSampler()
     private let disk = DiskSampler()
     private let damageLog = DamageLogger()
-    private lazy var diskCapacityBytes: UInt64 = SSDWear.capacityBytes()   // read once, cached
+    private lazy var diskCapacityBytes: UInt64 = SSDCapacity.bytes()   // read once, cached (0 if unavailable)
 
     init() {
         cpuMem = CPUMemSampler(sys: sys)
@@ -84,19 +84,18 @@ final class Sampler {
             snap.localModelMemoryMB = wl.localModelMemoryMB
         }
 
-        // Disk (host writes to the block layer; cumulative lifetime survives reboot via Disk.swift's JSONL baseline).
+        // Disk (host writes to the internal NVMe block layer; cumulative observed total survives
+        // reboot via Disk.swift's JSONL baseline). No wear % is derived: true NAND wear (NVMe SMART
+        // PERCENTAGE_USED / Data Units Written) is not readable sudoless on Apple Silicon, so any
+        // wear figure would be fabricated — see the project honesty rule.
         let d = disk.sample()
         snap.diskWriteBytesPerSec = round1(d.writeBps)
         snap.diskReadBytesPerSec  = round1(d.readBps)
-        snap.diskSessionWrittenGB  = round2(Double(d.sessionWrittenBytes)  / 1e9)
-        snap.diskLifetimeWrittenGB = round2(Double(d.lifetimeWrittenBytes) / 1e9)
-        let tbw = SSDWear.ratedTBW(forCapacityBytes: diskCapacityBytes)
-        snap.diskTBWAssumed   = tbw
-        // TODO(NVMe SMART): a verified sudoless NVMe SMART PERCENTAGE_USED, if it ever becomes
-        // available, should REPLACE this derived estimate here and set diskWearBestEffort = false.
-        snap.diskWearPercent     = round2(SSDWear.damagePercent(lifetimeBytes: d.lifetimeWrittenBytes, ratedTBW: tbw))
-        snap.diskWearBestEffort  = true
-        snap.diskWearNote        = SSDWear.note(ratedTBW: tbw)
+        snap.diskSessionWrittenGB = round2(Double(d.sessionWrittenBytes) / 1e9)
+        snap.diskTotalWrittenGB   = round2(Double(d.totalWrittenBytes)   / 1e9)
+        snap.diskTrackingSince    = DiskTracking.sinceISO
+        snap.diskCapacityGB       = diskCapacityBytes > 0 ? round1(Double(diskCapacityBytes) / 1e9) : 0
+        snap.diskWriteNote        = "Host bytes written to the internal SSD that Monitor Island has observed since it started tracking — a lower bound, not the drive's total lifetime. True NAND wear (SMART) is not readable without admin on Apple Silicon."
 
         // Per-workload attribution: copy each label's session bytes into its Snapshot entry
         // (host writes, a lower bound; ri_diskio_byteswritten, same-user only).
@@ -105,12 +104,12 @@ final class Sampler {
             snap.workloads[i].diskWrittenSessionMB = round2(Double(bytes) / (1024 * 1024))
         }
 
-        // Low-frequency damage log (append-only JSON-lines; DamageLogger self-throttles to <= once / 5 min).
+        // Low-frequency write log (append-only JSON-lines; DamageLogger self-throttles to <= once / 5 min)
+        // — also the persistence that lets the cumulative observed total survive reboots.
         let claudeMB = round2(Double(workloads.sessionWrittenBytes(forLabel: "Claude Code")) / (1024 * 1024))
         let codexMB  = round2(Double(workloads.sessionWrittenBytes(forLabel: "Codex"))       / (1024 * 1024))
         damageLog.maybeAppend(sessionWrittenGB: snap.diskSessionWrittenGB,
-                              lifetimeWrittenGB: snap.diskLifetimeWrittenGB,
-                              damagePct: snap.diskWearPercent,
+                              totalWrittenGB: snap.diskTotalWrittenGB,
                               claudeCodeMB: claudeMB, codexMB: codexMB)
 
         return snap

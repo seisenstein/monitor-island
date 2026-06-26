@@ -72,7 +72,7 @@ func runSensors() {
         }
     }
 
-    print("\n=== Disk (IOBlockStorageDriver Statistics + derived wear) ===")
+    print("\n=== Disk (IOBlockStorageDriver Statistics; internal-NVMe host writes) ===")
     var diskIter: io_iterator_t = 0
     if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &diskIter) == KERN_SUCCESS {
         defer { IOObjectRelease(diskIter) }
@@ -100,14 +100,12 @@ func runSensors() {
     } else {
         print("  (no IOBlockStorageDriver services returned)")
     }
-    let capBytes = SSDWear.capacityBytes()
-    let tbw = SSDWear.ratedTBW(forCapacityBytes: capBytes)
+    let capBytes = SSDCapacity.bytes()
     let dsample = DiskSampler().sample()
-    print(String(format: "  capacity (IONVMeController capacity): %.0f GB", Double(capBytes) / 1e9))
-    print(String(format: "  chosen TBW tier: %.0f TB", tbw))
-    print(String(format: "  lifetime host written (this run's baseline): %.1f GB", Double(dsample.lifetimeWrittenBytes) / 1e9))
-    print(String(format: "  derived wear estimate: ~%.3f%% est (best-effort)", SSDWear.damagePercent(lifetimeBytes: dsample.lifetimeWrittenBytes, ratedTBW: tbw)))
-    print("  note: \(SSDWear.note(ratedTBW: tbw))")
+    print("  internal SSD capacity (IONVMeController capacity): \(capBytes > 0 ? String(format: "%.0f GB", Double(capBytes) / 1e9) : "unavailable")")
+    print(String(format: "  cumulative host writes observed (since tracking began): %.1f GB", Double(dsample.totalWrittenBytes) / 1e9))
+    print("  note: NAND wear (NVMe SMART PERCENTAGE_USED / Data Units Written) is not readable sudoless")
+    print("        on Apple Silicon's internal SSD, so no wear % is derived.")
 }
 
 if let i = args.firstIndex(of: "--shot-settings") {

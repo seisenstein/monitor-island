@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let originKey = "MonitorIsland.windowOrigin"
     private let snappedKey = "MonitorIsland.snappedUnderCamera"
     private var snapMenuItem: NSMenuItem?
+    private var showHideItem: NSMenuItem?
     private var snappedUnderCamera = false
     private var repositioning = false   // true while we move the window programmatically
     private var isTransitioning = false // true during a pill<->card expand/collapse spring
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         FontLoader.register()
         model.onSnapToggle = { [weak self] in self?.toggleSnap() }
         model.onCornerSnap = { [weak self] request in self?.snapToCorner(request) }
+        model.onHide = { [weak self] in self?.hideIsland() }
         // Bracket the expand/collapse: hold off the per-frame reactive reposition while the
         // resize spring runs, then clamp the settled size on-screen exactly once.
         model.onTransitionBegin = { [weak self] in self?.isTransitioning = true }
@@ -515,7 +517,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "MI"
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Show / Hide", action: #selector(toggleVisible), keyEquivalent: "s"))
+        // Title reflects state so it's obvious how to bring a hidden island back.
+        let showHide = NSMenuItem(title: window.isVisible ? "Hide Monitor Island" : "Show Monitor Island",
+                                  action: #selector(toggleVisible), keyEquivalent: "s")
+        menu.addItem(showHide)
+        showHideItem = showHide
 
         let snapItem = NSMenuItem(title: "Snap under camera", action: #selector(toggleSnap), keyEquivalent: "c")
         snapItem.state = snappedUnderCamera ? .on : .off
@@ -543,7 +549,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleVisible() {
-        if window.isVisible { window.orderOut(nil) } else { window.makeKeyAndOrderFront(nil) }
+        setIslandVisible(!window.isVisible)
+    }
+
+    // Hide button on the island: collapse to the compact pill so the next reveal is the
+    // unobtrusive state, then order the window out. Reopen from the MI menu-bar item.
+    private func hideIsland() {
+        model.expanded = false
+        setIslandVisible(false)
+    }
+
+    // Single place that shows/hides the window and keeps the menu item title in sync.
+    private func setIslandVisible(_ visible: Bool) {
+        guard let win = window else { return }
+        if visible { win.makeKeyAndOrderFront(nil) } else { win.orderOut(nil) }
+        showHideItem?.title = visible ? "Hide Monitor Island" : "Show Monitor Island"
     }
 
     @objc private func setInterval(_ sender: NSMenuItem) {

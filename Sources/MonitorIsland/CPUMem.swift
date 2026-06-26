@@ -115,8 +115,8 @@ final class CPUMemSampler {
         var headroomGB: Double
         var swapUsedGB: Double
         var swapTotalGB: Double
-        var swapUsedPercent: Double   // exact: swap used as % of unified memory (ground truth)
-        var pressurePercent: Double    // 0..100 "distance to swap" proxy (gauge fill)
+        var swapUsedPercent: Double   // swap used as % of the allocated swap file (used/total); 0 when no swap
+        var pressurePercent: Double    // 0..100 SWAP ring fill, driven by the kernel pressure LEVEL
         var pressureLevel: Int         // kernel: 1 normal, 2 warning, 4 critical (exact)
         var pressure: Bool
     }
@@ -160,7 +160,9 @@ final class CPUMemSampler {
         let usedGB = Double(usedBytes) / gb
         let usedPct = total > 0 ? Double(usedBytes) / Double(total) * 100.0 : 0
         let headroom = totalGB - usedGB
-        let swapUsedPct = total > 0 ? Double(swapUsed) / Double(total) * 100.0 : 0
+        // Swap "fullness": used as a fraction of the CURRENT swap-file allocation (not of RAM —
+        // RAM is a meaningless denominator for swap). 0 when the machine has no swap file.
+        let swapUsedPct = swapTotal > 0 ? Double(swapUsed) / Double(swapTotal) * 100.0 : 0
 
         // Kernel memory-pressure level — the OS's OWN swap trigger, so this is the
         // exact ground truth for "how close to swapping": 1 normal, 2 warning, 4
@@ -171,21 +173,16 @@ final class CPUMemSampler {
         if sysctlbyname("kern.memorystatus_vm_pressure_level", &lvl, &lvlSize, nil, 0) != 0 { lvl = 1 }
         let pressureLevel = Int(lvl)
 
-        // Continuous "distance to swap" proxy (0..100) for the gauge fill. The number
-        // itself is best-effort, but it is BANDED by the exact kernel level so the ring
-        // is unmistakably in the warning/critical zone exactly when the OS says so:
-        //   normal  -> 0..60  (calm), driven by memory fullness above ~60%
-        //   warning -> 65..90
-        //   critical-> 90..100
-        // usedFrac already includes the compressor, so compression (the pre-swap stage)
-        // pushes the proxy up before any page actually spills to SSD.
-        let usedFrac = total > 0 ? Double(usedBytes) / Double(total) : 0
-        func clamp01(_ x: Double) -> Double { min(max(x, 0), 1) }
+        // SWAP ring FILL (0..100), driven ONLY by the kernel's exact pressure level — the one honest
+        // "are we swapping" signal. The old fill tracked RAM fullness, so the ring read ~8% on a
+        // perfectly calm machine and pinned high on RAM-heavy M1s that weren't paging. Now the ring
+        // is empty when pressure is normal and fills as the OS itself escalates; the magnitude of
+        // swap lives in the ring's centered GB number, not in the arc.
         let pressurePct: Double
         switch pressureLevel {
-        case 4:  pressurePct = 90 + 10 * clamp01((usedFrac - 0.90) / 0.10)
-        case 2:  pressurePct = 65 + 25 * clamp01((usedFrac - 0.75) / 0.20)
-        default: pressurePct = 60 * clamp01((usedFrac - 0.60) / 0.35)
+        case 4:  pressurePct = 100   // critical
+        case 2:  pressurePct = 66    // warning
+        default: pressurePct = 0     // normal -> calm/empty
         }
 
         let swapGrowing = swapUsed > prevSwapUsed

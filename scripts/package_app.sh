@@ -41,6 +41,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>Monitor Island uses Apple Events to focus the Terminal, iTerm2, or Ghostty tab hosting the clicked workload session.</string>
   <key>NSHumanReadableCopyright</key><string>© 2026 Promptable Technologies — MIT License</string>
 </dict>
 </plist>

@@ -4,13 +4,15 @@ import AppKit   // NSEvent.doubleClickInterval for the tap-disambiguation window
 // Ring gauge: trimmed circle with a centered mono number and a brand caption.
 // `fill` decouples the arc from the centered number: when nil the arc tracks
 // `value` (the default for GPU/CPU/MEM). The SWAP ring passes a separate `fill`
-// (the memory-pressure proxy) so the arc shows "how close to swapping" while the
-// number stays exact swap-used %.
+// (the kernel pressure level) so the arc shows memory pressure while the centered
+// number shows the swap amount via `centerText`.
 struct RingGauge: View {
-    var value: Double      // 0..100 (centered number)
+    var value: Double      // 0..100 (centered number when centerText is nil; also the default arc)
     var accent: Color
     var caption: String
     var fill: Double? = nil   // 0..100 arc; defaults to `value`
+    var centerText: String? = nil    // overrides the "%02d" number (e.g. the SWAP ring's GB figure)
+    var centerSuffix: String = "%"   // small unit after the number
     var size: CGFloat = 62    // diameter; stroke + fonts scale with it so 4 rings can share a row
 
     var body: some View {
@@ -31,11 +33,11 @@ struct RingGauge: View {
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: 1) {
-                    Text(String(format: "%02d", Int(value.rounded())))
+                    Text(centerText ?? String(format: "%02d", Int(value.rounded())))
                         .font(.mono(numFont, weight: .bold))
                         .monospacedDigit()
                         .contentTransition(.numericText())
-                    Text("%")
+                    Text(centerSuffix)
                         .font(.mono(numFont * 0.625, weight: .semibold))
                 }
                 .foregroundStyle(Theme.textPrimary)
@@ -315,12 +317,12 @@ struct IslandView: View {
     var compact: some View {
         VStack(spacing: 7) {
             HStack(spacing: 11) {
-                metric("GPU", Int(s.gpu.rounded()), "%", accent)
-                metric("MEM", Int(s.memUsedPercent.rounded()), "%", accent)
-                metric("CPU", Int(s.cpuTotal.rounded()), "%", accent)
-                // SWAP: number is exact swap-used %; label escalates accent->amber->red with
-                // kernel pressure, warning before the machine actually pages to SSD.
-                metric("SWAP", Int(snap.swapUsedPercent.rounded()), "%",
+                metric("GPU", String(format: "%02d", Int(s.gpu.rounded())), "%", accent)
+                metric("MEM", String(format: "%02d", Int(s.memUsedPercent.rounded())), "%", accent)
+                metric("CPU", String(format: "%02d", Int(s.cpuTotal.rounded())), "%", accent)
+                // SWAP: centered number is swap actually in use (GB) — comparable across machines;
+                // label escalates accent->amber->red with the kernel memory-pressure level.
+                metric("SWAP", fmtSwap(s.swapUsedGB), "G",
                        swapColor(snap.pressureLevel))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .bold))
@@ -328,29 +330,29 @@ struct IslandView: View {
             }
             // SSD reader: its own row directly below GPU/CPU/MEM/SWAP, visible even when closed.
             SSDReader(writeHistory: s.diskWriteHistory,
-                      wearPercent: snap.diskWearPercent,
-                      lifetimeGB: snap.diskLifetimeWrittenGB,
+                      writeBytesPerSec: s.diskWrite,
+                      totalWrittenGB: snap.diskTotalWrittenGB,
+                      since: trackingSinceText,
+                      capacityGB: snap.diskCapacityGB,
+                      note: snap.diskWriteNote ?? "",
                       accent: accent,
-                      wearColor: diskWearColor(snap.diskWearPercent),
                       compact: true)
         }
         .padding(.horizontal, 12).padding(.vertical, 8)
         .fixedSize()
     }
 
-    func metric(_ label: String, _ value: Int, _ suffix: String, _ color: Color) -> some View {
+    func metric(_ label: String, _ valueText: String, _ suffix: String, _ color: Color) -> some View {
         VStack(spacing: 2) {
             HStack(spacing: 0) {
                 // Fixed-width number slot: a hidden "100" reserves the widest possible
                 // value's width in the real font, and the visible number is trailing-
                 // aligned within it. This keeps the pill from changing width as values
-                // cross digit counts (0 -> 70 -> 100). monospacedDigit keeps the digits
-                // from jiggling inside the slot.
+                // cross digit counts (0 -> 70 -> 100, or SWAP's "0" -> "12"). monospacedDigit
+                // keeps the digits from jiggling inside the slot.
                 ZStack(alignment: .trailing) {
                     Text("100").hidden()
-                    // Zero-padded to two digits (00, 01, ... 99, 100) so every metric
-                    // reads as a stable two-digit percentage.
-                    Text(String(format: "%02d", value))
+                    Text(valueText)
                         .contentTransition(.numericText())
                 }
                 .font(.mono(15, weight: .bold))
@@ -377,14 +379,27 @@ struct IslandView: View {
             } else {
                 expandedContent
                     .overlay(alignment: .topTrailing) {
-                        Button {
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { showSettings = true }
-                        } label: {
-                            Image(systemName: "gearshape.fill")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Theme.textFaint)
+                        HStack(spacing: 12) {
+                            // Hide: order the window out. Reopen from the MI menu-bar item.
+                            Button {
+                                model.onHide?()
+                            } label: {
+                                Image(systemName: "eye.slash.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Theme.textFaint)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Hide Monitor Island — reopen from the MI menu-bar item")
+
+                            Button {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.82)) { showSettings = true }
+                            } label: {
+                                Image(systemName: "gearshape.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(Theme.textFaint)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                         .padding(10)
                     }
             }
@@ -392,30 +407,34 @@ struct IslandView: View {
     }
 
     // The normal expanded body: a single row of four rings (GPU / CPU / MEM / SWAP),
-    // then the detail rows, sparkline and workloads. SWAP's arc is the pressure proxy
-    // (how close to swapping) while its number is exact swap-used %.
+    // then the detail rows, sparkline and workloads. SWAP's arc is the kernel pressure
+    // level (empty when calm) while its centered number is the swap actually in use (GB).
     var expandedContent: some View {
         VStack(alignment: .leading, spacing: 13) {
             HStack(spacing: 12) {
                 RingGauge(value: s.gpu, accent: accent, caption: "GPU", size: 54)
                 RingGauge(value: s.cpuTotal, accent: accent, caption: "CPU", size: 54)
                 RingGauge(value: s.memUsedPercent, accent: accent, caption: "MEM", size: 54)
-                RingGauge(value: snap.swapUsedPercent,
+                RingGauge(value: s.swapPressure,
                           accent: swapColor(snap.pressureLevel),
                           caption: "SWAP",
                           fill: s.swapPressure,
+                          centerText: fmtSwap(s.swapUsedGB),
+                          centerSuffix: "G",
                           size: 54)
             }
             .frame(maxWidth: .infinity)
 
             // SSD reader: the cohesive disk surface, directly below the rings and above
-            // Memory/Temp (replaces the old Net + Disk-throughput rows). Best-effort wear
-            // estimate + cumulative "life" + a live write-activity sparkline, grouped as one.
+            // Memory/Temp. Live write rate + write-activity sparkline + cumulative host
+            // bytes observed since tracking began, grouped as one. No wear % (unmeasurable).
             SSDReader(writeHistory: s.diskWriteHistory,
-                      wearPercent: snap.diskWearPercent,
-                      lifetimeGB: snap.diskLifetimeWrittenGB,
+                      writeBytesPerSec: s.diskWrite,
+                      totalWrittenGB: snap.diskTotalWrittenGB,
+                      since: trackingSinceText,
+                      capacityGB: snap.diskCapacityGB,
+                      note: snap.diskWriteNote ?? "",
                       accent: accent,
-                      wearColor: diskWearColor(snap.diskWearPercent),
                       compact: false)
 
             row("Memory",
@@ -569,11 +588,27 @@ struct IslandView: View {
         return String(format: "%.2f MB", mb)
     }
 
-    // SSD damage escalation: accent under 10% (derived estimate, low), amber 10–50%, red >= 50%.
-    // Reuses ONLY the documented pressure-exception colors — no new palette entries.
-    func diskWearColor(_ pct: Double) -> Color {
-        pct >= 50 ? Theme.pressureCritical : (pct >= 10 ? Theme.pressureWarn : accent)
+    // SWAP ring centered number: swap actually in use, in GB. "0" when negligible; one decimal
+    // under 10 GB, whole numbers above so the fixed digit slot stays stable.
+    func fmtSwap(_ gb: Double) -> String {
+        if gb < 0.05 { return "0" }
+        if gb < 10 { return String(format: "%.1f", gb) }
+        return String(format: "%.0f", gb)
     }
+
+    // Snapshot.diskTrackingSince (ISO) formatted short, e.g. "Jun 23, 2026"; "" if unknown.
+    private var trackingSinceText: String {
+        guard let iso = snap.diskTrackingSince,
+              let date = IslandView.isoParser.date(from: iso) else { return "" }
+        return IslandView.shortDate.string(from: date)
+    }
+
+    private static let isoParser = ISO8601DateFormatter()
+    private static let shortDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d, yyyy"
+        return f
+    }()
 }
 
 // A clickable workload-instance row: tapping opens the process's working directory (e.g. a
@@ -616,6 +651,6 @@ private struct WorkloadInstanceRow: View {
             hovered = h
             if h { NSCursor.pointingHand.push() } else { NSCursor.pop() }
         }
-        .help("Open in Finder")
+        .help("Focus session")
     }
 }

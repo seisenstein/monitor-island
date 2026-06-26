@@ -51,10 +51,26 @@ unsnaps), the refresh interval (1, 2, 5 seconds), a local-model overlay toggle, 
 - Live GPU utilization, unified-memory pressure, CPU (E+P core split), power in watts, die temperature
 - Network up/down rate
 - Workload detection: Claude Code, Claude desktop, Codex, local models (LM Studio / llama.cpp)
-- Real-time SSD write tracking with a best-effort wear estimate and per-process attribution (Claude Code, Codex) — the wear % is a derived best-effort estimate (Apple publishes no TBW), labeled "~/est"
+- Clicking a Claude Code / Codex session focuses its hosting terminal tab or pane when the terminal exposes a safe sudoless control surface
+- Real-time SSD write tracking (live rate + cumulative host bytes observed since first launch) with per-process attribution (Claude Code, Codex). No wear % is shown: true NAND wear (NVMe SMART) is not readable without admin on Apple Silicon, so any wear figure would be fabricated
 - Draggable, always-on-top pill that collapses to a compact view
 - Snap-under-camera mode for notched displays
 - Liquid Glass background on macOS Tahoe 26; frosted `.ultraThinMaterial` on Sonoma/Sequoia
+
+### Click-to-focus support
+
+Session rows use the clicked process's parent chain and controlling TTY to focus the host app without sudo.
+
+| App | Support level | How it works |
+|-----|---------------|--------------|
+| iTerm2 | Exact pane | Matches the CLI process TTY to an iTerm session `tty`, then selects the session, tab, and window with AppleScript. |
+| Terminal.app | Exact tab | Matches the CLI process TTY to a Terminal tab `tty`, then selects the tab and frontmost window with AppleScript. |
+| kitty | Exact pane when remote control is already enabled | Uses `KITTY_LISTEN_ON` plus `KITTY_WINDOW_ID`/PID and `kitten @ focus-window`. If kitty has no remote-control socket, it falls back. |
+| Ghostty | Best-effort pane | Uses Ghostty AppleScript only when the clicked process cwd uniquely identifies one terminal. Duplicate cwd matches fall back to app activation. |
+| Claude Desktop Cowork | Window-level only | Claude has no public tab-selection AppleScript surface; Monitor Island raises a matching Claude window by title through Accessibility only if permission is already granted. |
+| Warp and other terminals | App activation fallback | Current public Warp URI actions open new windows/tabs and do not focus an existing pane by pid or tty. |
+
+The first AppleScript focus for Terminal, iTerm2, or Ghostty may trigger the standard macOS Automation prompt. Denying it simply falls back to activating the owning app.
 
 ## Which sudoless API backs each metric
 
@@ -62,12 +78,12 @@ unsnaps), the refresh interval (1, 2, 5 seconds), a local-model overlay toggle, 
 |--------|-----|----------|
 | CPU usage, per-core and per-core-type split | `host_processor_info(PROCESSOR_CPU_LOAD_INFO)` plus `hw.perflevelN.*` sysctls | No |
 | Memory used / total / headroom, swap | `host_statistics64(HOST_VM_INFO64)`, `hw.memsize`, `vm.swapusage` | No |
-| Swap used %, memory-pressure level | `vm.swapusage` (exact swap) + `kern.memorystatus_vm_pressure_level` (exact 1/2/4) + `host_statistics64` page counts (continuous proxy) | No |
+| Swap in use (GB), memory-pressure level | `vm.swapusage` (exact swap used/total) + `kern.memorystatus_vm_pressure_level` (exact 1/2/4, drives the ring fill) | No |
 | GPU utilization, in-use GPU memory | IOKit `IOAccelerator` -> `PerformanceStatistics` -> `Device Utilization %` | No |
 | CPU / GPU / ANE / DRAM power (watts) | IOReport "Energy Model" group | Yes (IOReport) |
 | Temperature (die sensors) | IOHIDEventSystemClient thermal sensors (PrimaryUsagePage 0xff00, usage 5) | Yes (IOHID) |
 | Network up/down rate | `getifaddrs` per-interface byte counters, delta per tick | No |
-| SSD writes, wear estimate | IOKit `IOBlockStorageDriver` -> `Statistics` -> `Bytes Written`, lifetime accumulation log | No |
+| SSD write rate + cumulative host writes | IOKit `IOBlockStorageDriver` -> `Statistics` -> `Bytes (Write)`, scoped to the internal `IONVMeController`, accumulated since first launch (persisted JSONL survives reboots) | No |
 | Workload detection (GUI) | `NSWorkspace.runningApplications` | No |
 | Workload detection (CLI) | `proc_listpids` + `proc_pidpath` + `KERN_PROCARGS2` + `proc_pid_rusage` | No |
 | Local model name | LM Studio / llama.cpp OpenAI-compatible `/v1/models`, or the `-m` / `-hf` arg | No |
@@ -94,17 +110,22 @@ distributed as a DMG. That also means no App Store sandbox, which is fine and ex
   `--sensors` mode prints the full discovered sensor map so the mapping can be verified per chip.
 - ANE occupancy is not exposed by Apple. Any ANE figure is derived from ANE power and labeled
   accordingly, not a fabricated percentage.
-- The SWAP gauge is a hybrid: its centered number is exact swap-used % (`vm.swapusage`, ground
-  truth — 0 until the machine actually pages to SSD), while its ring fill is a continuous
-  "distance to swap" proxy and its color escalates sky -> amber -> red. The proxy *number* is
-  best-effort, but it is banded by the kernel's exact `kern.memorystatus_vm_pressure_level`
-  (normal/warning/critical — the OS's own swap trigger), so the warning and critical zones are
-  ground truth even though the smooth fill inside a band is an estimate. This lets you watch how
-  close you are to swapping long before any page is written.
-- SSD wear % is best-effort. Apple does not publish a rated TBW for its SSD controllers. The
-  estimate uses lifetime-written bytes vs. a conservative reference figure and is labeled "~/est"
-  in the UI to flag the approximation. Per-process SSD write attribution (Claude Code, Codex) is
-  accurate to the tick granularity of `proc_pid_rusage`.
+- The SWAP gauge is honest end to end: its centered number is the swap **actually in use, in GB**
+  (`vm.swapusage`, ground truth — `0` until the machine actually pages to SSD), shown in GB rather
+  than as a "% of RAM" (RAM is a meaningless denominator for a dynamically-grown swap file, and
+  scaling by installed RAM made the same swap read differently on an 8 GB vs 16 GB Mac). The ring
+  **fill** is driven solely by the kernel's exact `kern.memorystatus_vm_pressure_level`
+  (normal -> empty, warning, critical) and the color escalates sky -> amber -> red with it. So the
+  ring is calm when the OS reports no pressure and fills only as the OS itself escalates — it never
+  shows phantom pressure from ordinary RAM usage.
+- No SSD wear % is shown. Apple's internal SSD does not expose its NVMe SMART health log
+  (Percentage Used / Data Units Written) without admin rights, so a true wear figure is impossible
+  under the sudoless rule and any estimate (host bytes ÷ a guessed TBW) would be fabricated.
+  Instead the SSD panel shows the live **write rate** and the **cumulative host bytes Monitor
+  Island has observed** since it first launched (labeled with that start date) — a verifiable lower
+  bound, explicitly *not* the drive's lifetime total. The counter is scoped to the internal NVMe
+  controller so mounted disk images and external drives don't inflate it. Per-process SSD write
+  attribution (Claude Code, Codex) is accurate to the tick granularity of `proc_pid_rusage`.
 
 ## Self-test and verification modes
 

@@ -23,7 +23,8 @@ final class Smoother: ObservableObject {
     @Published var netUp: Double = 0
     @Published var diskWrite: Double = 0   // smoothed host write bytes/sec
     @Published var diskRead: Double = 0    // smoothed host read bytes/sec
-    @Published var swapPressure: Double = 0   // smoothed "distance to swap" proxy (SWAP ring fill)
+    @Published var swapUsedGB: Double = 0     // smoothed swap-used GB (SWAP ring centered number)
+    @Published var swapPressure: Double = 0   // smoothed kernel-pressure-driven SWAP ring fill
 
     // Smoothed workload memory: aggregate per label, and per individual instance pid.
     @Published var workloadMem: [String: Double] = [:]
@@ -48,6 +49,7 @@ final class Smoother: ObservableObject {
     private var tNetUp: Double = 0
     private var tDiskWrite: Double = 0
     private var tDiskRead: Double = 0
+    private var tSwapUsedGB: Double = 0
     private var tSwapPressure: Double = 0
     private var tWorkloadMem: [String: Double] = [:]
     private var tInstanceMem: [Int32: Double] = [:]
@@ -106,6 +108,7 @@ final class Smoother: ObservableObject {
         tNetUp = s.netUpBytesPerSec
         tDiskWrite = s.diskWriteBytesPerSec
         tDiskRead  = s.diskReadBytesPerSec
+        tSwapUsedGB = s.swapUsedGB
         tSwapPressure = s.pressurePercent
 
         // Workload memory targets (aggregate per label + per-instance per pid).
@@ -150,6 +153,7 @@ final class Smoother: ObservableObject {
         netUp = tNetUp
         diskWrite = tDiskWrite
         diskRead = tDiskRead
+        swapUsedGB = tSwapUsedGB
         swapPressure = tSwapPressure
         workloadMem = tWorkloadMem
         instanceMem = tInstanceMem
@@ -182,6 +186,7 @@ final class Smoother: ObservableObject {
         gap((tNetUp - netUp) / 1000.0);     netUp += (tNetUp - netUp) * k
         gap((tDiskWrite - diskWrite) / 1000.0); diskWrite += (tDiskWrite - diskWrite) * k
         gap((tDiskRead - diskRead) / 1000.0);   diskRead  += (tDiskRead - diskRead) * k
+        gap(tSwapUsedGB - swapUsedGB);      swapUsedGB += (tSwapUsedGB - swapUsedGB) * k
         gap(tSwapPressure - swapPressure);  swapPressure += (tSwapPressure - swapPressure) * k
         for (key, target) in tWorkloadMem {
             let cur = workloadMem[key] ?? target

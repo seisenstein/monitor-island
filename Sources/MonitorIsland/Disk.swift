@@ -1,30 +1,54 @@
 import Foundation
 import IOKit
 
+// MARK: - DiskTracking
+
+// When this install first began accumulating host-write bytes. Persisted once (UserDefaults) and
+// shown next to the cumulative figure so "written" is always scoped to a real start date — never
+// presented as the drive's true lifetime (which is not readable sudoless on Apple Silicon).
+enum DiskTracking {
+    private static let key = "MonitorIsland.diskTrackingSince"
+
+    // ISO-8601 date tracking began; created (now) on first access if absent.
+    static var sinceISO: String {
+        if let s = UserDefaults.standard.string(forKey: key) { return s }
+        let now = ISO8601DateFormatter().string(from: Date())
+        UserDefaults.standard.set(now, forKey: key)
+        return now
+    }
+}
+
 // MARK: - DiskSampler
 
-// Block-layer host write/read throughput via IOBlockStorageDriver Statistics (sudoless, no SMART).
-// Counters reset on reboot; the persisted JSONL baseline in DamageLogger absorbs that reset so
-// the lifetime figure survives reboots.
+// Block-layer host write/read throughput + cumulative host bytes written, read sudolessly from
+// IOBlockStorageDriver Statistics (no SMART, no sudo).
+//
+// IMPORTANT semantics: "Bytes (Write)" in IOBlockStorageDriver Statistics is "bytes written since
+// the block storage driver was instantiated" — i.e. it RESETS on every reboot. It is NOT a drive
+// lifetime odometer. So the only honest cumulative number we can build is "host bytes Monitor
+// Island has OBSERVED since it first started tracking": we start the baseline at 0 (never anchor to
+// the arbitrary since-boot value), accumulate forward deltas, and persist the running total via
+// DamageLogger so it survives reboots (the boot-counter reset is absorbed by the persisted total).
+// True NAND wear / drive lifetime is intentionally not estimated — see the project's honesty rule.
 final class DiskSampler {
     private var prevWrite: UInt64 = 0
     private var prevRead:  UInt64 = 0
     private var prevTime:  Date   = Date()
     private var primed:    Bool   = false
 
-    private var lifetimeBaseline:    UInt64
-    private var sessionWritten:      UInt64 = 0
-    private var hasPersistedBaseline: Bool
+    // Cumulative observed total = persisted baseline (prior runs) + this run's forward deltas.
+    private var totalBaseline:  UInt64
+    private var sessionWritten: UInt64 = 0
 
     init() {
-        let persisted = DamageLogger.readLastLifetimeBytes()
-        lifetimeBaseline     = persisted
-        hasPersistedBaseline = (persisted > 0)
+        // Resume the cumulative observed total from prior runs. First-ever run -> 0 (NOT the live
+        // since-boot counter), so the figure means exactly "bytes observed since tracking began".
+        totalBaseline = DamageLogger.readPersistedTotalBytes()
     }
 
-    // Returns (writeBps, readBps, sessionWrittenBytes, lifetimeWrittenBytes).
-    func sample() -> (writeBps: Double, readBps: Double, sessionWrittenBytes: UInt64, lifetimeWrittenBytes: UInt64) {
-        let cur     = readHostTotals()
+    // Returns (writeBps, readBps, sessionWrittenBytes, totalWrittenBytes).
+    func sample() -> (writeBps: Double, readBps: Double, sessionWrittenBytes: UInt64, totalWrittenBytes: UInt64) {
+        let cur     = readInternalTotals()
         let now     = Date()
         let elapsed = max(0.001, now.timeIntervalSince(prevTime))
         var wbps    = 0.0
@@ -33,15 +57,8 @@ final class DiskSampler {
         if primed {
             wbps = max(0, Double(cur.write &- prevWrite) / elapsed)
             rbps = max(0, Double(cur.read  &- prevRead)  / elapsed)
-            // Counter resets on reboot → only accumulate forward deltas.
+            // Counter resets on reboot (and can dip if a volume unmounts) -> only count forward deltas.
             sessionWritten &+= (cur.write >= prevWrite ? cur.write &- prevWrite : 0)
-        } else if !hasPersistedBaseline {
-            // FIRST-EVER RUN (no persisted JSONL history): anchor the cumulative baseline to the
-            // live host write total so the lifetime figure starts at the real lower bound (~the live
-            // ioreg counter, hundreds of GB) instead of 0. After this it is persisted via the JSONL
-            // tail and survives reboots (the boot-counter reset is absorbed by the persisted baseline).
-            lifetimeBaseline     = cur.write
-            hasPersistedBaseline = true
         }
 
         prevWrite = cur.write
@@ -49,82 +66,90 @@ final class DiskSampler {
         prevTime  = now
         primed    = true
 
-        let lifetime = lifetimeBaseline &+ sessionWritten
-        return (wbps, rbps, sessionWritten, lifetime)
+        let total = totalBaseline &+ sessionWritten
+        return (wbps, rbps, sessionWritten, total)
     }
 
-    // Enumerate IOBlockStorageDriver services and sum their Bytes (Write) and Bytes (Read).
-    private func readHostTotals() -> (write: UInt64, read: UInt64) {
+    // Sum Bytes(Write)/(Read) over the IOBlockStorageDriver(s) that belong to the INTERNAL NVMe
+    // controller(s) only — so mounted disk images (IOHDIXController), external USB/Thunderbolt
+    // drives, and synthesized volumes are not folded into the internal-SSD write total. Falls back
+    // to summing every IOBlockStorageDriver if no NVMe-scoped driver is found (defensive: never 0).
+    private func readInternalTotals() -> (write: UInt64, read: UInt64) {
         var totalWrite: UInt64 = 0
         var totalRead:  UInt64 = 0
+        var found = false
 
+        var nvmeIter: io_iterator_t = 0
+        if IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IONVMeController"), &nvmeIter) == KERN_SUCCESS {
+            defer { IOObjectRelease(nvmeIter) }
+            var controller = IOIteratorNext(nvmeIter)
+            while controller != 0 {
+                defer { IOObjectRelease(controller); controller = IOIteratorNext(nvmeIter) }
+                // Walk every descendant of this NVMe controller; the IOBlockStorageDriver sits a few
+                // levels below it (IONVMeBlockStorageDevice -> IOBlockStorageDriver).
+                var childIter: io_iterator_t = 0
+                guard IORegistryEntryCreateIterator(controller, kIOServicePlane,
+                                                    IOOptionBits(kIORegistryIterateRecursively),
+                                                    &childIter) == KERN_SUCCESS else { continue }
+                defer { IOObjectRelease(childIter) }
+                var node = IOIteratorNext(childIter)
+                while node != 0 {
+                    defer { IOObjectRelease(node); node = IOIteratorNext(childIter) }
+                    guard IOObjectConformsTo(node, "IOBlockStorageDriver") != 0 else { continue }
+                    if let s = readStats(node) {
+                        totalWrite &+= s.write
+                        totalRead  &+= s.read
+                        found = true
+                    }
+                }
+            }
+        }
+
+        if found { return (totalWrite, totalRead) }
+        return readAllBlockTotals()   // fallback: older/edge layouts
+    }
+
+    // Fallback used only if the NVMe-scoped walk finds nothing: sum ALL IOBlockStorageDrivers.
+    private func readAllBlockTotals() -> (write: UInt64, read: UInt64) {
+        var totalWrite: UInt64 = 0
+        var totalRead:  UInt64 = 0
         var iterator: io_iterator_t = 0
-        let match = IOServiceMatching("IOBlockStorageDriver")
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, match, &iterator) == KERN_SUCCESS else {
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IOBlockStorageDriver"), &iterator) == KERN_SUCCESS else {
             return (0, 0)
         }
         defer { IOObjectRelease(iterator) }
-
         var service = IOIteratorNext(iterator)
         while service != 0 {
             defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
-            var props: Unmanaged<CFMutableDictionary>? = nil
-            guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-                  let dict = props?.takeRetainedValue() as? [String: Any] else { continue }
-            guard let stats = dict["Statistics"] as? [String: Any] else { continue }
-            if let w = (stats["Bytes (Write)"] as? NSNumber)?.uint64Value {
-                totalWrite &+= w
-            }
-            if let r = (stats["Bytes (Read)"] as? NSNumber)?.uint64Value {
-                totalRead &+= r
+            if let s = readStats(service) {
+                totalWrite &+= s.write
+                totalRead  &+= s.read
             }
         }
-
         return (totalWrite, totalRead)
+    }
+
+    // Read Bytes(Write)/(Read) from one IOBlockStorageDriver's Statistics dictionary.
+    private func readStats(_ service: io_object_t) -> (write: UInt64, read: UInt64)? {
+        var props: Unmanaged<CFMutableDictionary>? = nil
+        guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+              let dict = props?.takeRetainedValue() as? [String: Any],
+              let stats = dict["Statistics"] as? [String: Any] else { return nil }
+        let w = (stats["Bytes (Write)"] as? NSNumber)?.uint64Value ?? 0
+        let r = (stats["Bytes (Read)"]  as? NSNumber)?.uint64Value ?? 0
+        return (w, r)
     }
 }
 
-// MARK: - SSDWear
+// MARK: - SSDCapacity
 
-// Derived SSD wear estimate from host-bytes-written vs rated TBW.
-// Accurate capacity → rated TBW lookup; actual NAND wear is higher due to write amplification.
-enum SSDWear {
-    // Nearest-capacity tier table: (capacityBytes, ratedTBW).
-    private static let tbwTiers: [(Double, Double)] = [
-        (256e9,  300),
-        (512e9,  600),
-        (1e12,  1000),
-        (2e12,  2000),
-    ]
-
-    static func ratedTBW(forCapacityBytes bytes: UInt64) -> Double {
-        let cap = Double(bytes)
-        guard !tbwTiers.isEmpty else { return 1000 }
-        var best     = tbwTiers[0]
-        var bestDiff = abs(cap - tbwTiers[0].0)
-        for tier in tbwTiers.dropFirst() {
-            let diff = abs(cap - tier.0)
-            if diff < bestDiff { bestDiff = diff; best = tier }
-        }
-        return best.1
-    }
-
-    static func damagePercent(lifetimeBytes: UInt64, ratedTBW: Double) -> Double {
-        guard ratedTBW > 0 else { return 0 }
-        // TODO(NVMe SMART): if a verified sudoless NVMe SMART PERCENTAGE_USED becomes available, override this derived estimate with it and set Snapshot.diskWearBestEffort = false.
-        return Double(lifetimeBytes) / (ratedTBW * 1e12) * 100.0
-    }
-
-    static func note(ratedTBW: Double) -> String {
-        return "Apple does not publish TBW; estimate = host bytes / ~\(Int(ratedTBW.rounded())) TB rated; actual NAND wear is higher (write amplification)."
-    }
-
-    // Returns capacity in bytes from the first IONVMeController with a non-zero "capacity" value.
-    static func capacityBytes() -> UInt64 {
+// Internal SSD capacity in bytes, for context only (e.g. "1 TB drive"). Reads the first
+// IONVMeController with a non-zero "capacity" value; returns 0 if unavailable (caller hides it).
+enum SSDCapacity {
+    static func bytes() -> UInt64 {
         var iterator: io_iterator_t = 0
-        let match = IOServiceMatching("IONVMeController")
-        guard IOServiceGetMatchingServices(kIOMainPortDefault, match, &iterator) == KERN_SUCCESS else {
-            return 1_000_000_000_000
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching("IONVMeController"), &iterator) == KERN_SUCCESS else {
+            return 0
         }
         defer { IOObjectRelease(iterator) }
 
@@ -133,22 +158,25 @@ enum SSDWear {
             defer { IOObjectRelease(service); service = IOIteratorNext(iterator) }
             var props: Unmanaged<CFMutableDictionary>? = nil
             guard IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-                  let dict = props?.takeRetainedValue() as? [String: Any] else { continue }
-            guard let cc = dict["Controller Characteristics"] as? [String: Any] else { continue }
+                  let dict = props?.takeRetainedValue() as? [String: Any],
+                  let cc = dict["Controller Characteristics"] as? [String: Any] else { continue }
             if let cap = (cc["capacity"] as? NSNumber)?.uint64Value, cap > 0 {
                 return cap
             }
         }
-
-        return 1_000_000_000_000
+        return 0
     }
 }
 
 // MARK: - DamageLogger
 
-// Append-only JSONL log of disk damage estimates. Written at most once per flushInterval (default
-// 5 min) to avoid self-wear. Also used by DiskSampler.init to recover the lifetime baseline after
-// a reboot (when the IOKit counter resets to zero).
+// Append-only JSONL log of observed disk-write totals. Written at most once per flushInterval
+// (default 5 min) to avoid self-wear. Also used by DiskSampler.init to recover the cumulative
+// observed total after a reboot (when the IOBlockStorageDriver counter resets to zero).
+//
+// Uses a fresh file ("disk_writes.jsonl") with the corrected "totalWrittenGB" semantics; the old
+// "disk_damage.jsonl" (which stored an arbitrary since-boot-anchored "lifetime") is left untouched
+// and ignored, so upgrades start a clean, honest count from 0.
 final class DamageLogger {
     let flushInterval: TimeInterval = 300
 
@@ -159,20 +187,19 @@ final class DamageLogger {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         return support
             .appendingPathComponent("MonitorIsland", isDirectory: true)
-            .appendingPathComponent("disk_damage.jsonl")
+            .appendingPathComponent("disk_writes.jsonl")
     }()
 
     private struct Record: Codable {
         let ts:                String
         let sessionWrittenGB:  Double
-        let lifetimeWrittenGB: Double
-        let damagePct:         Double
+        let totalWrittenGB:    Double   // cumulative host bytes observed since tracking began (NOT drive lifetime)
         let claudeCodeMB:      Double?
         let codexMB:           Double?
     }
 
     init() {
-        precondition(flushInterval >= 60, "damage log flush interval must be >= 60s to avoid self-wear")
+        precondition(flushInterval >= 60, "write log flush interval must be >= 60s to avoid self-wear")
         try? FileManager.default.createDirectory(
             at: Self.logURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -184,16 +211,14 @@ final class DamageLogger {
     // because lastFlush is distantPast).
     func maybeAppend(
         sessionWrittenGB: Double,
-        lifetimeWrittenGB: Double,
-        damagePct: Double,
+        totalWrittenGB: Double,
         claudeCodeMB: Double,
         codexMB: Double
     ) {
         let rec = Record(
             ts:                ISO8601DateFormatter().string(from: Date()),
             sessionWrittenGB:  sessionWrittenGB,
-            lifetimeWrittenGB: lifetimeWrittenGB,
-            damagePct:         damagePct,
+            totalWrittenGB:    totalWrittenGB,
             claudeCodeMB:      claudeCodeMB > 0 ? claudeCodeMB : nil,
             codexMB:           codexMB      > 0 ? codexMB      : nil
         )
@@ -212,62 +237,39 @@ final class DamageLogger {
         append(rec)
     }
 
-    // Recover the last recorded lifetime bytes after a reboot (when the IOKit counter has reset).
-    // Reads only the last ~2 KB of the log to find the most recent complete line.
-    static func readLastLifetimeBytes() -> UInt64 {
+    // Recover the cumulative observed total after a restart/reboot (when the IOKit counter has
+    // reset). Reads the last ~4 KB of the log and returns the MAX totalWrittenGB across those
+    // lines: the observed total is monotonic, so the max is the true latest and is immune to a
+    // split partial first line or to stray total=0 lines that one-shot CLI modes (--dump/--shot)
+    // append. Returns 0 if the file is absent (first-ever run -> baseline 0).
+    static func readPersistedTotalBytes() -> UInt64 {
         guard let fh = try? FileHandle(forReadingFrom: logURL) else { return 0 }
         defer { try? fh.close() }
 
-        let fileSize: UInt64
-        if #available(macOS 10.15.4, *) {
-            guard let size = try? fh.seekToEnd(), size > 0 else { return 0 }
-            fileSize = size
-        } else {
-            let size = fh.seekToEndOfFile()
-            guard size > 0 else { return 0 }
-            fileSize = size
-        }
+        guard let fileSize = try? fh.seekToEnd(), fileSize > 0 else { return 0 }
+        let tail: UInt64 = min(4096, fileSize)
+        try? fh.seek(toOffset: fileSize - tail)
+        guard let data = try? fh.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return 0 }
 
-        let tail: UInt64 = min(2048, fileSize)
-        let offset = fileSize - tail
-        if #available(macOS 10.15.4, *) {
-            try? fh.seek(toOffset: offset)
-        } else {
-            fh.seek(toFileOffset: offset)
+        var maxGB = 0.0
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            guard let lineData = line.data(using: .utf8),
+                  let rec = try? JSONDecoder().decode(Record.self, from: lineData) else { continue }
+            if rec.totalWrittenGB > maxGB { maxGB = rec.totalWrittenGB }
         }
-
-        let data: Data
-        if #available(macOS 10.15.4, *) {
-            guard let d = try? fh.readToEnd() else { return 0 }
-            data = d
-        } else {
-            data = fh.readDataToEndOfFile()
-        }
-
-        guard let text = String(data: data, encoding: .utf8) else { return 0 }
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
-        guard let lastLine = lines.last else { return 0 }
-        guard let lineData = lastLine.data(using: .utf8),
-              let rec = try? JSONDecoder().decode(Record.self, from: lineData) else { return 0 }
-        return UInt64(max(0, rec.lifetimeWrittenGB) * 1e9)
+        return UInt64(maxGB * 1e9)
     }
 
-    // Append a single JSON line to the log file.
-    // Creates the file if it does not exist; appends if it does.
-    // NO .prettyPrinted — single-line JSON is required for the JSONL format.
+    // Append a single JSON line to the log file (single-line JSON — JSONL format, no pretty-print).
     private func append(_ rec: Record) {
         guard var line = try? JSONEncoder().encode(rec) else { return }
         line.append(0x0A) // newline byte
 
         if let fh = try? FileHandle(forWritingTo: Self.logURL) {
             defer { try? fh.close() }
-            if #available(macOS 10.15.4, *) {
-                _ = try? fh.seekToEnd()
-                try? fh.write(contentsOf: line)
-            } else {
-                fh.seekToEndOfFile()
-                fh.write(line)
-            }
+            _ = try? fh.seekToEnd()
+            try? fh.write(contentsOf: line)
         } else {
             try? line.write(to: Self.logURL, options: .atomic)
         }

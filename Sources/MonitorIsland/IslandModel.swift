@@ -27,6 +27,7 @@ final class IslandModel: ObservableObject {
     @Published var snapped = false                 // centered under the camera
     var onSnapToggle: (() -> Void)?                // wired by AppDelegate
     var onCornerSnap: ((SnapRequest) -> Void)?     // wired by AppDelegate
+    var onHide: (() -> Void)?                       // wired by AppDelegate (hide button -> orderOut)
     // Bracket a pill<->card expand/collapse so AppDelegate can suppress its per-frame
     // reactive reposition for the duration of the resize spring and clamp ONCE on settle.
     var onTransitionBegin: (() -> Void)?           // wired by AppDelegate
